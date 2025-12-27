@@ -37,6 +37,8 @@ if (corsOrigin) {
 await fastify.register(cors, {
   origin: corsOriginValue,
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 });
 
 // Initialize Firebase Admin SDK
