@@ -206,11 +206,27 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.put('/:id', async (request: AuthenticatedRequest, reply) => {
     try {
       const { id } = request.params as { id: string };
+      fastify.log.info(`Updating client ${id} - hasBody: ${!!request.body}, bodyKeys: ${request.body ? Object.keys(request.body as any).join(',') : 'none'}`);
+      
+      if (!request.body || typeof request.body !== 'object') {
+        fastify.log.warn(`Invalid request body for client ${id}`);
+        return reply.status(400).send({ error: 'Invalid request body' });
+      }
+      
       const client = await memoryDb.updateClient(id, request.body as any);
-      if (!client) return reply.status(404).send({ error: 'Client not found' });
+      if (!client) {
+        fastify.log.warn(`Client ${id} not found`);
+        return reply.status(404).send({ error: 'Client not found' });
+      }
+      fastify.log.info(`Client ${id} updated successfully`);
       return reply.send(client);
     } catch (error: any) {
-      return reply.status(500).send({ error: error.message || 'Failed to update client' });
+      const clientId = (request.params as { id?: string })?.id || 'unknown';
+      fastify.log.error(`Error updating client ${clientId}: ${error.message || error} - ${error.stack || 'no stack'}`);
+      return reply.status(500).send({ 
+        error: error.message || 'Failed to update client',
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
     }
   });
 

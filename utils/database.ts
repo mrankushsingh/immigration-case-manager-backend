@@ -693,54 +693,83 @@ class DatabaseAdapter {
     
     // Special handling for payment updates - merge payments array instead of replacing
     if (data.payment) {
-      const existingClient = await this.getClient(id);
-      if (existingClient && existingClient.payment) {
-        const existingPayments = existingClient.payment.payments || [];
-        const newPayments = data.payment.payments || [];
-        
-        // Create a unique identifier for each payment
-        const getPaymentId = (p: any) => `${p.date}_${p.amount}_${p.method}${p.note ? '_' + p.note : ''}`;
-        const existingPaymentIds = new Set(existingPayments.map(getPaymentId));
-        
-        if (newPayments.length > 0) {
-          // Check if new payments are actually new (not in existing)
-          const trulyNewPayments = newPayments.filter(
-            (p: any) => !existingPaymentIds.has(getPaymentId(p))
-          );
+      try {
+        const existingClient = await this.getClient(id);
+        if (existingClient && existingClient.payment) {
+          const existingPayments = Array.isArray(existingClient.payment.payments) 
+            ? existingClient.payment.payments 
+            : [];
+          const newPayments = Array.isArray(data.payment.payments) 
+            ? data.payment.payments 
+            : [];
           
-          // If we have truly new payments and the new array is shorter, merge
-          // This handles the case where frontend accidentally sends partial list
-          if (trulyNewPayments.length > 0 && newPayments.length < existingPayments.length) {
-            data.payment.payments = [...existingPayments, ...trulyNewPayments];
-          } else if (trulyNewPayments.length === 0 && newPayments.length < existingPayments.length) {
-            // New array is shorter but contains no new payments - likely a mistake, preserve existing
+          // Create a unique identifier for each payment
+          const getPaymentId = (p: any) => {
+            if (!p || typeof p !== 'object') return '';
+            return `${p.date || ''}_${p.amount || 0}_${p.method || ''}${p.note ? '_' + p.note : ''}`;
+          };
+          const existingPaymentIds = new Set(existingPayments.map(getPaymentId));
+          
+          if (newPayments.length > 0) {
+            // Check if new payments are actually new (not in existing)
+            const trulyNewPayments = newPayments.filter(
+              (p: any) => p && typeof p === 'object' && !existingPaymentIds.has(getPaymentId(p))
+            );
+            
+            // If we have truly new payments and the new array is shorter, merge
+            // This handles the case where frontend accidentally sends partial list
+            if (trulyNewPayments.length > 0 && newPayments.length < existingPayments.length) {
+              data.payment.payments = [...existingPayments, ...trulyNewPayments];
+            } else if (trulyNewPayments.length === 0 && newPayments.length < existingPayments.length) {
+              // New array is shorter but contains no new payments - likely a mistake, preserve existing
+              data.payment.payments = existingPayments;
+            }
+            // Otherwise, use the provided payments array (frontend sent complete list)
+          } else if (newPayments.length === 0 && existingPayments.length > 0) {
+            // If no new payments provided, preserve existing payments
             data.payment.payments = existingPayments;
           }
-          // Otherwise, use the provided payments array (frontend sent complete list)
-        } else if (newPayments.length === 0 && existingPayments.length > 0) {
-          // If no new payments provided, preserve existing payments
-          data.payment.payments = existingPayments;
+          
+          // Ensure paidAmount is calculated correctly from all payments
+          const finalPayments = data.payment.payments || existingPayments;
+          if (Array.isArray(finalPayments)) {
+            const calculatedPaidAmount = finalPayments.reduce(
+              (sum: number, p: any) => sum + (Number(p?.amount) || 0),
+              0
+            );
+            // Use provided paidAmount if it's higher (might include adjustments), otherwise use calculated
+            data.payment.paidAmount = Math.max(
+              Number(data.payment.paidAmount) || 0,
+              calculatedPaidAmount
+            );
+          }
+          
+          // Merge payment object to preserve other fields like totalFee
+          data.payment = {
+            ...existingClient.payment,
+            ...data.payment,
+            payments: finalPayments,
+          };
+        } else if (existingClient && !existingClient.payment) {
+          // Client exists but has no payment object - create one
+          if (!data.payment.payments || !Array.isArray(data.payment.payments)) {
+            data.payment.payments = [];
+          }
+          if (!data.payment.paidAmount && Array.isArray(data.payment.payments)) {
+            data.payment.paidAmount = data.payment.payments.reduce(
+              (sum: number, p: any) => sum + (Number(p?.amount) || 0),
+              0
+            );
+          }
         }
-        
-        // Ensure paidAmount is calculated correctly from all payments
-        if (data.payment.payments) {
-          const calculatedPaidAmount = data.payment.payments.reduce(
-            (sum: number, p: any) => sum + (p.amount || 0),
-            0
-          );
-          // Use provided paidAmount if it's higher (might include adjustments), otherwise use calculated
-          data.payment.paidAmount = Math.max(
-            data.payment.paidAmount || 0,
-            calculatedPaidAmount
-          );
+      } catch (error: any) {
+        // If there's an error getting existing client, log it but continue with the update
+        // This prevents the update from failing completely
+        console.error('Error merging payments in updateClient:', error.message || error);
+        // Ensure payment structure is valid even if merge failed
+        if (data.payment && !Array.isArray(data.payment.payments)) {
+          data.payment.payments = [];
         }
-        
-        // Merge payment object to preserve other fields like totalFee
-        data.payment = {
-          ...existingClient.payment,
-          ...data.payment,
-          payments: data.payment.payments || existingPayments,
-        };
       }
     }
     
