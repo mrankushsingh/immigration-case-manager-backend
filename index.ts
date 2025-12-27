@@ -15,8 +15,19 @@ const PORT = Number(process.env.PORT) || 4000;
 // Configure CORS
 // In production, set CORS_ORIGIN to your frontend URL (e.g., https://your-frontend-domain.com)
 // For development, you can use '*' or specific localhost URLs
+const corsOrigin = process.env.CORS_ORIGIN;
+let corsOriginValue: string | string[] | boolean | undefined;
+
+if (corsOrigin) {
+  // Remove trailing slashes and handle multiple origins
+  const origins = corsOrigin.split(',').map(origin => origin.trim().replace(/\/+$/, ''));
+  corsOriginValue = origins.length === 1 ? origins[0] : origins;
+} else {
+  corsOriginValue = process.env.NODE_ENV === 'production' ? false : '*';
+}
+
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN || (process.env.NODE_ENV === 'production' ? false : '*'),
+  origin: corsOriginValue,
   credentials: true,
   optionsSuccessStatus: 200,
 };
