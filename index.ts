@@ -45,14 +45,11 @@ initializeFirebaseAdmin();
 // For Railway bucket, files are served via signed URLs or proxy
 // For local storage, use express.static
 const usingBucket = isUsingBucketStorage();
-console.log(`📁 File storage mode: ${usingBucket ? 'Railway Bucket' : 'Local Filesystem'}`);
 
 if (!usingBucket) {
   const uploadsDir = db.getUploadsDir();
-  console.log(`📁 Local storage directory: ${uploadsDir}`);
   app.use('/uploads', express.static(uploadsDir));
 } else {
-  console.log(`📁 Using Railway bucket storage for file serving`);
   // Proxy files from Railway bucket (serve through our domain instead of redirecting)
   // Use wildcard route to capture full filename including special characters
   app.get('/uploads/*', async (req, res) => {
@@ -70,23 +67,16 @@ if (!usingBucket) {
       filename = pathMatch[1]; // Fallback if decoding fails
     }
     
-    console.log(`📁 Serving file from bucket: ${filename}`);
-    console.log(`   Request path: ${req.path}`);
-    console.log(`   Extracted filename: ${filename}`);
-    
     try {
       // Try relative path first (standard format)
       let fileUrl = `/uploads/${filename}`;
       
       // First, check if file exists
       const { fileExists } = await import('./utils/storage.js');
-      console.log(`🔍 Checking if file exists: ${fileUrl}`);
       const exists = await fileExists(fileUrl);
       
       if (!exists) {
         console.error(`❌ File does not exist: ${filename}`);
-        console.error(`   Checked URL: ${fileUrl}`);
-        console.error(`   Bucket key would be: uploads/${filename}`);
         return res.status(404).json({ 
           error: 'File not found',
           filename: filename,
@@ -94,8 +84,6 @@ if (!usingBucket) {
           message: 'The requested file does not exist in storage'
         });
       }
-      
-      console.log(`✅ File exists, generating signed URL...`);
       
       // If the stored URL in database is a full URL, we need to handle it
       // But for serving, we'll use the relative path format
@@ -112,7 +100,6 @@ if (!usingBucket) {
       
       if (signedUrl.startsWith('http')) {
         // Fetch file from bucket and proxy it through our domain
-        console.log(`📥 Fetching file from bucket: ${signedUrl.substring(0, 50)}...`);
         const response = await fetch(signedUrl);
         
         if (response.ok) {
@@ -126,7 +113,6 @@ if (!usingBucket) {
           res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
           res.setHeader('Content-Length', buffer.byteLength);
           
-          console.log(`✅ Successfully serving file: ${filename} (${(buffer.byteLength / 1024).toFixed(2)} KB)`);
           res.send(Buffer.from(buffer));
         } else {
           console.error(`❌ Failed to fetch file from bucket: ${response.status} ${response.statusText}`);
@@ -134,7 +120,6 @@ if (!usingBucket) {
         }
       } else {
         // Fallback: try to fetch and proxy the file
-        console.log(`📥 Fallback: fetching file with relative URL: ${signedUrl}`);
         const response = await fetch(signedUrl);
         if (response.ok) {
           const buffer = await response.arrayBuffer();

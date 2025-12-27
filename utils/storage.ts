@@ -51,10 +51,6 @@ if (isRailwayBucketConfigured()) {
         forcePathStyle: true, // Required for S3-compatible services
       });
       console.log(`✅ Railway bucket client initialized`);
-      console.log(`   Endpoint: ${endpoint}`);
-      console.log(`   Bucket: ${bucketName}`);
-      console.log(`   Region: ${region}`);
-      console.log(`   Access Key: ${accessKey.substring(0, 8)}...${accessKey.substring(accessKey.length - 4)}`);
     }
   } catch (error: any) {
     console.error('❌ Failed to initialize Railway bucket client:', error.message);
@@ -90,8 +86,6 @@ export async function uploadFile(
       // Railway bucket might provide different URL formats, so we normalize to relative path
       // The file will be served through our /uploads route which generates signed URLs
       const fileUrl = `/uploads/${fileName}`;
-      console.log(`✅ File uploaded to Railway bucket: ${key}`);
-      console.log(`   Stored as: ${fileUrl}`);
       return fileUrl;
     } catch (error: any) {
       console.error('❌ Error uploading to Railway bucket:', {
@@ -231,7 +225,6 @@ export async function getFileUrl(fileUrl: string, expiresIn: number = 3600): Pro
       bucketKey = `uploads/${fileName}`;
     }
     
-    console.log(`🔗 Detected full URL format, extracting: ${fileName} -> ${bucketKey}`);
   } else if (fileUrl.startsWith('/uploads/')) {
     // Relative path format: /uploads/filename.pdf
     fileName = fileUrl.replace('/uploads/', '');
@@ -240,26 +233,22 @@ export async function getFileUrl(fileUrl: string, expiresIn: number = 3600): Pro
     // Assume it's just a filename or different format
     fileName = fileUrl.split('/').pop() || fileUrl;
     bucketKey = fileUrl.startsWith('uploads/') ? fileUrl : `uploads/${fileName}`;
-    console.log(`⚠️  Unusual URL format, normalizing: ${fileUrl} -> ${bucketKey}`);
   }
 
   if (!s3Client || !isRailwayBucketConfigured()) {
     // For local storage, return the relative URL (served by express.static)
-    console.log(`📁 Using local storage for: ${fileUrl}`);
     return fileUrl.startsWith('/') ? fileUrl : `/uploads/${fileName}`;
   }
 
   const bucketName = process.env.RAILWAY_BUCKET_NAME!;
 
   try {
-    console.log(`🔗 Generating signed URL for: ${bucketKey} in bucket: ${bucketName}`);
     const command = new GetObjectCommand({
       Bucket: bucketName,
       Key: bucketKey,
     });
 
     const signedUrl = await getSignedUrl(s3Client, command, { expiresIn });
-    console.log(`✅ Signed URL generated successfully for: ${fileName}`);
     return signedUrl;
   } catch (error: any) {
     console.error(`❌ Error generating signed URL for ${fileName}:`, {
