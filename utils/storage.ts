@@ -100,7 +100,7 @@ export async function uploadFile(
       // If bucket doesn't exist, fall back to local storage
       if (error.message.includes('does not exist') || error.name === 'NoSuchBucket' || error.Code === 'NoSuchBucket') {
         console.warn('⚠️  Bucket does not exist, falling back to local filesystem storage');
-        // Fall through to local storage below
+        // Fall through to local storage below - don't throw error
       } else if (error.Code === 'AccessDenied' || error.name === 'AccessDenied') {
         const endpoint = process.env.RAILWAY_BUCKET_ENDPOINT || 'Not set';
         const accessKeyPreview = process.env.RAILWAY_BUCKET_ACCESS_KEY 
@@ -121,12 +121,12 @@ Please verify:
       } else {
         // For other errors, also fall back to local storage
         console.warn(`⚠️  Bucket upload failed (${error.message}), falling back to local filesystem storage`);
-        // Fall through to local storage
+        // Fall through to local storage below
       }
     }
   }
   
-  // Use local filesystem storage (either no bucket configured or bucket error)
+  // Use local filesystem storage (either no bucket configured or bucket error occurred)
   {
     // Fallback to local filesystem
     const uploadsDir = db.getUploadsDir();
