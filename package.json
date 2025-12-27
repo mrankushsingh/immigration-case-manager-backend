@@ -14,7 +14,7 @@
     "immigration",
     "case-management",
     "api",
-    "express"
+    "fastify"
   ],
   "author": "",
   "license": "ISC",

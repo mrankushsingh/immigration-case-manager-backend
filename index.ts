@@ -127,11 +127,7 @@ if (!usingBucket) {
         }
       }
     } catch (error: any) {
-      fastify.log.error(`❌ Error serving file ${filename}:`, {
-        message: error.message,
-        stack: error.stack,
-        name: error.name,
-      });
+      fastify.log.error(`❌ Error serving file ${filename}: ${error.message}`);
       return reply.status(500).send({ 
         error: 'Failed to serve file',
         details: error.message 
@@ -211,10 +207,11 @@ await fastify.register(async (fastify) => {
 }, { prefix: '/api' });
 
 // 404 handler for undefined API routes
-fastify.setNotFoundHandler({
-  url: '/api/*'
-}, async (request, reply) => {
-  return reply.status(404).send({ error: 'API endpoint not found' });
+fastify.setNotFoundHandler(async (request, reply) => {
+  if (request.url.startsWith('/api/')) {
+    return reply.status(404).send({ error: 'API endpoint not found' });
+  }
+  return reply.status(404).send({ error: 'Not found' });
 });
 
 // Start server
