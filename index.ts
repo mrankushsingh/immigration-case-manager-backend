@@ -58,7 +58,11 @@ if (!usingBucket) {
     console.log(`📁 Serving file from bucket: ${filename}`);
     
     try {
-      const fileUrl = `/uploads/${filename}`;
+      // Try relative path first (standard format)
+      let fileUrl = `/uploads/${filename}`;
+      
+      // If the stored URL in database is a full URL, we need to handle it
+      // But for serving, we'll use the relative path format
       const signedUrl = await getFileUrl(fileUrl, 3600); // 1 hour expiry
       
       if (!signedUrl) {
