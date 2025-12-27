@@ -213,6 +213,26 @@ app.use('/api/users', usersRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/reminders', remindersRoutes);
 
+// Protected API endpoint: Check if a file exists (requires authentication)
+app.get('/api/files/check', async (req, res) => {
+  try {
+    const fileUrl = req.query.url as string;
+    if (!fileUrl) {
+      return res.status(400).json({ error: 'File URL is required' });
+    }
+
+    const exists = await fileExists(fileUrl);
+    
+    res.json({ 
+      exists,
+      url: fileUrl 
+    });
+  } catch (error: any) {
+    console.error('Error checking file existence:', error);
+    res.status(500).json({ error: 'Failed to check file existence' });
+  }
+});
+
 // 404 handler for undefined API routes
 app.use('/api/*', (req, res) => {
   res.status(404).json({ error: 'API endpoint not found' });
