@@ -166,27 +166,7 @@ if (!usingBucket) {
   });
 }
 
-// API Routes
-// Check if a file exists
-app.get('/api/files/check', async (req, res) => {
-  try {
-    const fileUrl = req.query.url as string;
-    if (!fileUrl) {
-      return res.status(400).json({ error: 'File URL is required' });
-    }
-
-    const exists = await fileExists(fileUrl);
-    
-    res.json({ 
-      exists,
-      url: fileUrl 
-    });
-  } catch (error: any) {
-    console.error('Error checking file existence:', error);
-    res.status(500).json({ error: 'Failed to check file existence' });
-  }
-});
-
+// Public routes (no authentication required)
 app.get('/health', async (req, res) => {
   try {
     const dbStatus = {
