@@ -53,9 +53,18 @@ if (!usingBucket) {
 } else {
   console.log(`📁 Using Railway bucket storage for file serving`);
   // Proxy files from Railway bucket (serve through our domain instead of redirecting)
-  app.get('/uploads/:filename', async (req, res) => {
-    const filename = decodeURIComponent(req.params.filename); // Decode URL-encoded filenames
+  app.get('/uploads/:filename(*)', async (req, res) => {
+    // Handle URL-encoded filenames and special characters
+    let filename: string;
+    try {
+      filename = decodeURIComponent(req.params.filename);
+    } catch (e) {
+      filename = req.params.filename; // Fallback if decoding fails
+    }
+    
     console.log(`📁 Serving file from bucket: ${filename}`);
+    console.log(`   Original param: ${req.params.filename}`);
+    console.log(`   Decoded filename: ${filename}`);
     
     try {
       // Try relative path first (standard format)
@@ -63,13 +72,17 @@ if (!usingBucket) {
       
       // First, check if file exists
       const { fileExists } = await import('./utils/storage.js');
+      console.log(`🔍 Checking if file exists: ${fileUrl}`);
       const exists = await fileExists(fileUrl);
       
       if (!exists) {
         console.error(`❌ File does not exist: ${filename}`);
+        console.error(`   Checked URL: ${fileUrl}`);
+        console.error(`   Bucket key would be: uploads/${filename}`);
         return res.status(404).json({ 
           error: 'File not found',
           filename: filename,
+          requestedUrl: fileUrl,
           message: 'The requested file does not exist in storage'
         });
       }
