@@ -97,8 +97,11 @@ export async function uploadFile(
         httpStatusCode: error.$metadata?.httpStatusCode,
       });
       
-      // Provide more helpful error message
-      if (error.Code === 'AccessDenied' || error.name === 'AccessDenied') {
+      // If bucket doesn't exist, fall back to local storage
+      if (error.message.includes('does not exist') || error.name === 'NoSuchBucket' || error.Code === 'NoSuchBucket') {
+        console.warn('⚠️  Bucket does not exist, falling back to local filesystem storage');
+        // Fall through to local storage below
+      } else if (error.Code === 'AccessDenied' || error.name === 'AccessDenied') {
         const endpoint = process.env.RAILWAY_BUCKET_ENDPOINT || 'Not set';
         const accessKeyPreview = process.env.RAILWAY_BUCKET_ACCESS_KEY 
           ? `${process.env.RAILWAY_BUCKET_ACCESS_KEY.substring(0, 8)}...` 
@@ -115,11 +118,16 @@ Please verify:
 3. The access key and secret key are valid and not expired
 4. The bucket has proper read/write permissions
 5. The endpoint URL is correct for your Railway region`);
+      } else {
+        // For other errors, also fall back to local storage
+        console.warn(`⚠️  Bucket upload failed (${error.message}), falling back to local filesystem storage`);
+        // Fall through to local storage
       }
-      
-      throw new Error(`Failed to upload file to bucket: ${error.message}`);
     }
-  } else {
+  }
+  
+  // Use local filesystem storage (either no bucket configured or bucket error)
+  {
     // Fallback to local filesystem
     const uploadsDir = db.getUploadsDir();
     const filePath = join(uploadsDir, fileName);
