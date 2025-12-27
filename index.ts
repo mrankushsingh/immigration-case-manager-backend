@@ -1,8 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import fastifyStatic from '@fastify/static';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import staticFiles from '@fastify/static';
 import caseTemplatesRoutes from './routes/caseTemplates.js';
 import clientsRoutes from './routes/clients.js';
 import usersRoutes from './routes/users.js';
@@ -13,6 +11,8 @@ import { db } from './utils/database.js';
 import { isUsingBucketStorage, getFileUrl, fileExists } from './utils/storage.js';
 import { initializeFirebaseAdmin } from './utils/firebase.js';
 import { authenticateToken } from './middleware/auth.js';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -48,7 +48,7 @@ const usingBucket = isUsingBucketStorage();
 
 if (!usingBucket) {
   const uploadsDir = db.getUploadsDir();
-  await fastify.register(fastifyStatic, {
+  await fastify.register(staticFiles, {
     root: uploadsDir,
     prefix: '/uploads/',
   });
@@ -73,7 +73,7 @@ if (!usingBucket) {
       const exists = await fileExists(fileUrl);
       
       if (!exists) {
-        fastify.log.error(`File does not exist: ${filename}`);
+        fastify.log.error(`❌ File does not exist: ${filename}`);
         return reply.status(404).send({ 
           error: 'File not found',
           filename: filename,
@@ -85,7 +85,7 @@ if (!usingBucket) {
       const signedUrl = await getFileUrl(fileUrl, 3600);
       
       if (!signedUrl) {
-        fastify.log.error(`Failed to generate signed URL for: ${filename}`);
+        fastify.log.error(`❌ Failed to generate signed URL for: ${filename}`);
         return reply.status(500).send({ 
           error: 'Failed to generate file access URL',
           filename: filename,
@@ -107,7 +107,7 @@ if (!usingBucket) {
           
           return reply.send(Buffer.from(buffer));
         } else {
-          fastify.log.error(`Failed to fetch file from bucket: ${response.status} ${response.statusText}`);
+          fastify.log.error(`❌ Failed to fetch file from bucket: ${response.status} ${response.statusText}`);
           return reply.status(404).send({ error: 'File not found in bucket' });
         }
       } else {
@@ -122,12 +122,16 @@ if (!usingBucket) {
           
           return reply.send(Buffer.from(buffer));
         } else {
-          fastify.log.error(`Fallback fetch failed: ${response.status} ${response.statusText}`);
+          fastify.log.error(`❌ Fallback fetch failed: ${response.status} ${response.statusText}`);
           return reply.status(404).send({ error: 'File not found' });
         }
       }
     } catch (error: any) {
-      fastify.log.error(`Error serving file ${filename}:`, error);
+      fastify.log.error(`❌ Error serving file ${filename}:`, {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+      });
       return reply.status(500).send({ 
         error: 'Failed to serve file',
         details: error.message 
@@ -169,54 +173,48 @@ fastify.get('/health', async (request, reply) => {
   }
 });
 
-// Apply authentication hook to all API routes
-fastify.addHook('onRequest', async (request, reply) => {
-  // Skip authentication for public routes
-  if (request.url === '/health' || request.url.startsWith('/uploads/')) {
-    return;
-  }
+// Apply authentication middleware to all API routes
+fastify.log.info('🔒 Securing all API routes with authentication middleware');
+
+// Register authenticated routes
+await fastify.register(async (fastify) => {
+  // Apply authentication to all routes in this context
+  fastify.addHook('onRequest', authenticateToken);
   
-  // Apply authentication to all /api routes
-  if (request.url.startsWith('/api/')) {
-    await authenticateToken(request, reply);
-  }
-});
+  // Register route plugins
+  await fastify.register(caseTemplatesRoutes, { prefix: '/case-templates' });
+  await fastify.register(clientsRoutes, { prefix: '/clients' });
+  await fastify.register(usersRoutes, { prefix: '/users' });
+  await fastify.register(settingsRoutes, { prefix: '/settings' });
+  await fastify.register(remindersRoutes, { prefix: '/reminders' });
+  await fastify.register(financialRoutes, { prefix: '/financial' });
+  
+  // Protected API endpoint: Check if a file exists
+  fastify.get('/files/check', async (request, reply) => {
+    try {
+      const fileUrl = (request.query as any).url as string;
+      if (!fileUrl) {
+        return reply.status(400).send({ error: 'File URL is required' });
+      }
 
-// Register API routes (all require authentication via hook)
-await fastify.register(caseTemplatesRoutes, { prefix: '/api/case-templates' });
-await fastify.register(clientsRoutes, { prefix: '/api/clients' });
-await fastify.register(usersRoutes, { prefix: '/api/users' });
-await fastify.register(settingsRoutes, { prefix: '/api/settings' });
-await fastify.register(remindersRoutes, { prefix: '/api/reminders' });
-await fastify.register(financialRoutes, { prefix: '/api/financial' });
-
-// Protected API endpoint: Check if a file exists
-fastify.get('/api/files/check', async (request, reply) => {
-  try {
-    const fileUrl = (request.query as any).url as string;
-    if (!fileUrl) {
-      return reply.status(400).send({ error: 'File URL is required' });
+      const exists = await fileExists(fileUrl);
+      
+      return reply.send({ 
+        exists,
+        url: fileUrl 
+      });
+    } catch (error: any) {
+      fastify.log.error('Error checking file existence:', error);
+      return reply.status(500).send({ error: 'Failed to check file existence' });
     }
-
-    const exists = await fileExists(fileUrl);
-    
-    return reply.send({ 
-      exists,
-      url: fileUrl 
-    });
-  } catch (error: any) {
-    fastify.log.error('Error checking file existence:', error);
-    return reply.status(500).send({ error: 'Failed to check file existence' });
-  }
-});
+  });
+}, { prefix: '/api' });
 
 // 404 handler for undefined API routes
 fastify.setNotFoundHandler({
-  preHandler: async (request, reply) => {
-    if (request.url.startsWith('/api/')) {
-      return reply.status(404).send({ error: 'API endpoint not found' });
-    }
-  }
+  url: '/api/*'
+}, async (request, reply) => {
+  return reply.status(404).send({ error: 'API endpoint not found' });
 });
 
 // Start server
