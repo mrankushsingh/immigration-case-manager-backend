@@ -8,6 +8,7 @@ import remindersRoutes from './routes/reminders.js';
 import { db } from './utils/database.js';
 import { isUsingBucketStorage, getFileUrl, fileExists } from './utils/storage.js';
 import { initializeFirebaseAdmin } from './utils/firebase.js';
+import { authenticateToken } from './middleware/auth.js';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
@@ -218,7 +219,14 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// API routes (authentication removed - publicly accessible)
+// Apply authentication middleware to all API routes
+// Public routes (health, file serving) are defined before this
+console.log('🔒 Securing all API routes with authentication middleware');
+
+// All API routes require authentication
+app.use('/api', authenticateToken);
+
+// API routes (all require authentication)
 app.use('/api/case-templates', caseTemplatesRoutes);
 app.use('/api/clients', clientsRoutes);
 app.use('/api/users', usersRoutes);
