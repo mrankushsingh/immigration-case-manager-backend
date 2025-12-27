@@ -53,18 +53,25 @@ if (!usingBucket) {
 } else {
   console.log(`📁 Using Railway bucket storage for file serving`);
   // Proxy files from Railway bucket (serve through our domain instead of redirecting)
-  app.get('/uploads/:filename(*)', async (req, res) => {
+  // Use wildcard route to capture full filename including special characters
+  app.get('/uploads/*', async (req, res) => {
+    // Extract filename from wildcard route (everything after /uploads/)
+    const pathMatch = req.path.match(/^\/uploads\/(.+)$/);
+    if (!pathMatch) {
+      return res.status(400).json({ error: 'Invalid file path' });
+    }
+    
     // Handle URL-encoded filenames and special characters
     let filename: string;
     try {
-      filename = decodeURIComponent(req.params.filename);
+      filename = decodeURIComponent(pathMatch[1]);
     } catch (e) {
-      filename = req.params.filename; // Fallback if decoding fails
+      filename = pathMatch[1]; // Fallback if decoding fails
     }
     
     console.log(`📁 Serving file from bucket: ${filename}`);
-    console.log(`   Original param: ${req.params.filename}`);
-    console.log(`   Decoded filename: ${filename}`);
+    console.log(`   Request path: ${req.path}`);
+    console.log(`   Extracted filename: ${filename}`);
     
     try {
       // Try relative path first (standard format)
