@@ -6,7 +6,7 @@ import usersRoutes from './routes/users.js';
 import settingsRoutes from './routes/settings.js';
 import remindersRoutes from './routes/reminders.js';
 import { db } from './utils/database.js';
-import { isUsingBucketStorage, getFileUrl } from './utils/storage.js';
+import { isUsingBucketStorage, getFileUrl, fileExists } from './utils/storage.js';
 import { initializeFirebaseAdmin } from './utils/firebase.js';
 
 const app = express();
@@ -49,41 +49,95 @@ if (!isUsingBucketStorage()) {
 } else {
   // Proxy files from Railway bucket (serve through our domain instead of redirecting)
   app.get('/uploads/:filename', async (req, res) => {
+    const filename = req.params.filename;
+    console.log(`📁 Serving file from bucket: ${filename}`);
+    
     try {
-      const fileUrl = `/uploads/${req.params.filename}`;
+      const fileUrl = `/uploads/${filename}`;
       const signedUrl = await getFileUrl(fileUrl, 3600); // 1 hour expiry
       
-      if (signedUrl && signedUrl.startsWith('http')) {
+      if (!signedUrl) {
+        console.error(`❌ Failed to generate signed URL for: ${filename}`);
+        return res.status(404).json({ error: 'File not found - could not generate access URL' });
+      }
+      
+      if (signedUrl.startsWith('http')) {
         // Fetch file from bucket and proxy it through our domain
+        console.log(`📥 Fetching file from bucket: ${signedUrl.substring(0, 50)}...`);
+        const response = await fetch(signedUrl);
+        
+        if (response.ok) {
+          const buffer = await response.arrayBuffer();
+          const contentType = response.headers.get('Content-Type') || 'application/octet-stream';
+          
+          // Set CORS headers
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET');
+          res.setHeader('Content-Type', contentType);
+          res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+          res.setHeader('Content-Length', buffer.byteLength);
+          
+          console.log(`✅ Successfully serving file: ${filename} (${(buffer.byteLength / 1024).toFixed(2)} KB)`);
+          res.send(Buffer.from(buffer));
+        } else {
+          console.error(`❌ Failed to fetch file from bucket: ${response.status} ${response.statusText}`);
+          res.status(404).json({ error: 'File not found in bucket' });
+        }
+      } else {
+        // Fallback: try to fetch and proxy the file
+        console.log(`📥 Fallback: fetching file with relative URL: ${signedUrl}`);
         const response = await fetch(signedUrl);
         if (response.ok) {
           const buffer = await response.arrayBuffer();
           const contentType = response.headers.get('Content-Type') || 'application/octet-stream';
+          
+          // Set CORS headers
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET');
           res.setHeader('Content-Type', contentType);
-          res.setHeader('Content-Disposition', `inline; filename="${req.params.filename}"`);
+          res.setHeader('Content-Length', buffer.byteLength);
+          
           res.send(Buffer.from(buffer));
         } else {
-          res.status(404).json({ error: 'File not found' });
-        }
-      } else {
-        // Fallback: try to fetch and proxy the file
-        const response = await fetch(signedUrl || fileUrl);
-        if (response.ok) {
-          const buffer = await response.arrayBuffer();
-          res.setHeader('Content-Type', response.headers.get('Content-Type') || 'application/octet-stream');
-          res.send(Buffer.from(buffer));
-        } else {
+          console.error(`❌ Fallback fetch failed: ${response.status} ${response.statusText}`);
           res.status(404).json({ error: 'File not found' });
         }
       }
     } catch (error: any) {
-      console.error('Error serving file:', error);
-      res.status(500).json({ error: 'Failed to serve file' });
+      console.error(`❌ Error serving file ${filename}:`, {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+      });
+      res.status(500).json({ 
+        error: 'Failed to serve file',
+        details: error.message 
+      });
     }
   });
 }
 
 // API Routes
+// Check if a file exists
+app.get('/api/files/check', async (req, res) => {
+  try {
+    const fileUrl = req.query.url as string;
+    if (!fileUrl) {
+      return res.status(400).json({ error: 'File URL is required' });
+    }
+
+    const exists = await fileExists(fileUrl);
+    
+    res.json({ 
+      exists,
+      url: fileUrl 
+    });
+  } catch (error: any) {
+    console.error('Error checking file existence:', error);
+    res.status(500).json({ error: 'Failed to check file existence' });
+  }
+});
+
 app.get('/health', async (req, res) => {
   try {
     const dbStatus = {

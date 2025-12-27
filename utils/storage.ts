@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { existsSync, unlinkSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
@@ -201,11 +201,13 @@ export async function deleteFile(fileUrl: string): Promise<void> {
  */
 export async function getFileUrl(fileUrl: string, expiresIn: number = 3600): Promise<string | null> {
   if (!fileUrl || !fileUrl.startsWith('/uploads/')) {
+    console.warn(`⚠️  Invalid file URL format: ${fileUrl}`);
     return null;
   }
 
   if (!s3Client || !isRailwayBucketConfigured()) {
     // For local storage, return the relative URL (served by express.static)
+    console.log(`📁 Using local storage for: ${fileUrl}`);
     return fileUrl;
   }
 
@@ -214,16 +216,60 @@ export async function getFileUrl(fileUrl: string, expiresIn: number = 3600): Pro
   const key = `uploads/${fileName}`;
 
   try {
+    console.log(`🔗 Generating signed URL for: ${key} in bucket: ${bucketName}`);
     const command = new GetObjectCommand({
       Bucket: bucketName,
       Key: key,
     });
 
     const signedUrl = await getSignedUrl(s3Client, command, { expiresIn });
+    console.log(`✅ Signed URL generated successfully for: ${fileName}`);
     return signedUrl;
   } catch (error: any) {
-    console.error('Error generating signed URL:', error);
+    console.error(`❌ Error generating signed URL for ${fileName}:`, {
+      errorCode: error.Code || error.name,
+      errorMessage: error.message,
+      key: key,
+      bucket: bucketName,
+    });
     return null;
+  }
+}
+
+/**
+ * Check if a file exists in storage (bucket or local filesystem)
+ */
+export async function fileExists(fileUrl: string): Promise<boolean> {
+  if (!fileUrl || !fileUrl.startsWith('/uploads/')) {
+    return false;
+  }
+
+  if (!s3Client || !isRailwayBucketConfigured()) {
+    // Check local filesystem
+    const fileName = fileUrl.replace('/uploads/', '');
+    const uploadsDir = db.getUploadsDir();
+    const filePath = join(uploadsDir, fileName);
+    return existsSync(filePath);
+  }
+
+  // Check Railway bucket
+  const fileName = fileUrl.replace('/uploads/', '');
+  const bucketName = process.env.RAILWAY_BUCKET_NAME!;
+  const key = `uploads/${fileName}`;
+
+  try {
+    const command = new HeadObjectCommand({
+      Bucket: bucketName,
+      Key: key,
+    });
+    await s3Client.send(command);
+    return true;
+  } catch (error: any) {
+    if (error.name === 'NotFound' || error.Code === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
+      return false;
+    }
+    console.error(`Error checking file existence for ${fileName}:`, error);
+    return false;
   }
 }
 
