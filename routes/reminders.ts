@@ -1,90 +1,82 @@
-import { Router } from 'express';
+import { FastifyPluginAsync } from 'fastify';
 import { db } from '../utils/database.js';
-import { authenticateToken, AuthenticatedRequest } from '../middleware/auth.js';
+import { AuthenticatedRequest } from '../middleware/auth.js';
 
-const router = Router();
 const memoryDb = db;
 
-// All routes require authentication
-router.use(authenticateToken);
-
-// Get all reminders
-router.get('/', async (req: AuthenticatedRequest, res) => {
-  try {
-    const reminders = await memoryDb.getReminders();
-    res.json(reminders);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Failed to get reminders' });
-  }
-});
-
-// Create a new reminder
-router.post('/', async (req: AuthenticatedRequest, res) => {
-  try {
-    const { client_id, client_name, client_surname, phone, reminder_date, notes, reminder_type } = req.body;
-
-    // client_id is optional (for standalone reminders), but name, surname, and date are required
-    if (!client_name || !client_surname || !reminder_date) {
-      return res.status(400).json({ error: 'client_name, client_surname, and reminder_date are required' });
+const remindersRoutes: FastifyPluginAsync = async (fastify) => {
+  fastify.get('/', async (request: AuthenticatedRequest, reply) => {
+    try {
+      const reminders = await memoryDb.getReminders();
+      return reply.send(reminders);
+    } catch (error: any) {
+      return reply.status(500).send({ error: error.message || 'Failed to get reminders' });
     }
+  });
 
-    const reminder = await memoryDb.insertReminder({
-      client_id,
-      client_name,
-      client_surname,
-      phone,
-      reminder_date,
-      notes,
-      reminder_type,
-    });
+  fastify.post('/', async (request: AuthenticatedRequest, reply) => {
+    try {
+      const { client_id, client_name, client_surname, phone, reminder_date, notes, reminder_type } = request.body as any;
 
-    res.status(201).json(reminder);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Failed to create reminder' });
-  }
-});
+      if (!client_name || !client_surname || !reminder_date) {
+        return reply.status(400).send({ error: 'client_name, client_surname, and reminder_date are required' });
+      }
 
-// Update a reminder
-router.put('/:id', async (req: AuthenticatedRequest, res) => {
-  try {
-    const { id } = req.params;
-    const { client_id, client_name, client_surname, phone, reminder_date, notes, reminder_type } = req.body;
+      const reminder = await memoryDb.insertReminder({
+        client_id,
+        client_name,
+        client_surname,
+        phone,
+        reminder_date,
+        notes,
+        reminder_type,
+      });
 
-    const updated = await memoryDb.updateReminder(id, {
-      client_id,
-      client_name,
-      client_surname,
-      phone,
-      reminder_date,
-      notes,
-      reminder_type,
-    });
-
-    if (!updated) {
-      return res.status(404).json({ error: 'Reminder not found' });
+      return reply.status(201).send(reminder);
+    } catch (error: any) {
+      return reply.status(500).send({ error: error.message || 'Failed to create reminder' });
     }
+  });
 
-    res.json({ success: true, message: 'Reminder updated successfully' });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Failed to update reminder' });
-  }
-});
+  fastify.put('/:id', async (request: AuthenticatedRequest, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      const { client_id, client_name, client_surname, phone, reminder_date, notes, reminder_type } = request.body as any;
 
-// Delete a reminder
-router.delete('/:id', async (req: AuthenticatedRequest, res) => {
-  try {
-    const { id } = req.params;
-    const deleted = await memoryDb.deleteReminder(id);
+      const updated = await memoryDb.updateReminder(id, {
+        client_id,
+        client_name,
+        client_surname,
+        phone,
+        reminder_date,
+        notes,
+        reminder_type,
+      });
 
-    if (!deleted) {
-      return res.status(404).json({ error: 'Reminder not found' });
+      if (!updated) {
+        return reply.status(404).send({ error: 'Reminder not found' });
+      }
+
+      return reply.send({ success: true, message: 'Reminder updated successfully' });
+    } catch (error: any) {
+      return reply.status(500).send({ error: error.message || 'Failed to update reminder' });
     }
+  });
 
-    res.json({ success: true, message: 'Reminder deleted successfully' });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Failed to delete reminder' });
-  }
-});
+  fastify.delete('/:id', async (request: AuthenticatedRequest, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      const deleted = await memoryDb.deleteReminder(id);
 
-export default router;
+      if (!deleted) {
+        return reply.status(404).send({ error: 'Reminder not found' });
+      }
 
+      return reply.send({ success: true, message: 'Reminder deleted successfully' });
+    } catch (error: any) {
+      return reply.status(500).send({ error: error.message || 'Failed to delete reminder' });
+    }
+  });
+};
+
+export default remindersRoutes;

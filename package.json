@@ -14,23 +14,21 @@
     "immigration",
     "case-management",
     "api",
-    "express"
+    "fastify"
   ],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
-    "cors": "^2.8.5",
-    "express": "^4.18.2",
+    "@fastify/cors": "^9.0.1",
+    "@fastify/multipart": "^8.0.0",
+    "@fastify/static": "^7.0.1",
+    "fastify": "^4.26.2",
     "firebase-admin": "^12.0.0",
-    "multer": "^1.4.5-lts.1",
     "pg": "^8.11.3"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.17",
-    "@types/multer": "^1.4.11",
     "@types/node": "^20.5.0",
     "@types/pg": "^8.10.9",
     "tsx": "^3.12.7",

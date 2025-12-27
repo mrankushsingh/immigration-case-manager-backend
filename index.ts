@@ -1,5 +1,8 @@
-import express from 'express';
-import cors from 'cors';
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import caseTemplatesRoutes from './routes/caseTemplates.js';
 import clientsRoutes from './routes/clients.js';
 import usersRoutes from './routes/users.js';
@@ -11,74 +14,67 @@ import { isUsingBucketStorage, getFileUrl, fileExists } from './utils/storage.js
 import { initializeFirebaseAdmin } from './utils/firebase.js';
 import { authenticateToken } from './middleware/auth.js';
 
-const app = express();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const fastify = Fastify({
+  logger: true,
+  bodyLimit: 10 * 1024 * 1024, // 10MB
+});
+
 const PORT = Number(process.env.PORT) || 4000;
 
 // Configure CORS
-// In production, set CORS_ORIGIN to your frontend URL (e.g., https://your-frontend-domain.com)
-// For development, you can use '*' or specific localhost URLs
 const corsOrigin = process.env.CORS_ORIGIN;
 let corsOriginValue: string | string[] | boolean | undefined;
 
 if (corsOrigin) {
-  // Remove trailing slashes and handle multiple origins
   const origins = corsOrigin.split(',').map(origin => origin.trim().replace(/\/+$/, ''));
   corsOriginValue = origins.length === 1 ? origins[0] : origins;
 } else {
   corsOriginValue = process.env.NODE_ENV === 'production' ? false : '*';
 }
 
-const corsOptions = {
+await fastify.register(cors, {
   origin: corsOriginValue,
   credentials: true,
-  optionsSuccessStatus: 200,
-};
-app.use(cors(corsOptions));
-
-// Body parsing with size limits
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+});
 
 // Initialize Firebase Admin SDK
 initializeFirebaseAdmin();
 
 // Serve uploaded files
-// For Railway bucket, files are served via signed URLs or proxy
-// For local storage, use express.static
 const usingBucket = isUsingBucketStorage();
 
 if (!usingBucket) {
   const uploadsDir = db.getUploadsDir();
-  app.use('/uploads', express.static(uploadsDir));
+  await fastify.register(fastifyStatic, {
+    root: uploadsDir,
+    prefix: '/uploads/',
+  });
 } else {
-  // Proxy files from Railway bucket (serve through our domain instead of redirecting)
-  // Use wildcard route to capture full filename including special characters
-  app.get('/uploads/*', async (req, res) => {
-    // Extract filename from wildcard route (everything after /uploads/)
-    const pathMatch = req.path.match(/^\/uploads\/(.+)$/);
+  // Proxy files from Railway bucket
+  fastify.get('/uploads/*', async (request, reply) => {
+    const pathMatch = request.url.match(/^\/uploads\/(.+)$/);
     if (!pathMatch) {
-      return res.status(400).json({ error: 'Invalid file path' });
+      return reply.status(400).send({ error: 'Invalid file path' });
     }
     
-    // Handle URL-encoded filenames and special characters
     let filename: string;
     try {
       filename = decodeURIComponent(pathMatch[1]);
     } catch (e) {
-      filename = pathMatch[1]; // Fallback if decoding fails
+      filename = pathMatch[1];
     }
     
     try {
-      // Try relative path first (standard format)
       let fileUrl = `/uploads/${filename}`;
       
-      // First, check if file exists
-      const { fileExists } = await import('./utils/storage.js');
       const exists = await fileExists(fileUrl);
       
       if (!exists) {
-        console.error(`❌ File does not exist: ${filename}`);
-        return res.status(404).json({ 
+        fastify.log.error(`File does not exist: ${filename}`);
+        return reply.status(404).send({ 
           error: 'File not found',
           filename: filename,
           requestedUrl: fileUrl,
@@ -86,13 +82,11 @@ if (!usingBucket) {
         });
       }
       
-      // If the stored URL in database is a full URL, we need to handle it
-      // But for serving, we'll use the relative path format
-      const signedUrl = await getFileUrl(fileUrl, 3600); // 1 hour expiry
+      const signedUrl = await getFileUrl(fileUrl, 3600);
       
       if (!signedUrl) {
-        console.error(`❌ Failed to generate signed URL for: ${filename}`);
-        return res.status(500).json({ 
+        fastify.log.error(`Failed to generate signed URL for: ${filename}`);
+        return reply.status(500).send({ 
           error: 'Failed to generate file access URL',
           filename: filename,
           message: 'Could not create access URL for the file'
@@ -100,51 +94,41 @@ if (!usingBucket) {
       }
       
       if (signedUrl.startsWith('http')) {
-        // Fetch file from bucket and proxy it through our domain
         const response = await fetch(signedUrl);
         
         if (response.ok) {
           const buffer = await response.arrayBuffer();
           const contentType = response.headers.get('Content-Type') || 'application/octet-stream';
           
-          // Set CORS headers
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'GET');
-          res.setHeader('Content-Type', contentType);
-          res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-          res.setHeader('Content-Length', buffer.byteLength);
+          reply.header('Access-Control-Allow-Origin', '*');
+          reply.header('Access-Control-Allow-Methods', 'GET');
+          reply.type(contentType);
+          reply.header('Content-Disposition', `inline; filename="${filename}"`);
           
-          res.send(Buffer.from(buffer));
+          return reply.send(Buffer.from(buffer));
         } else {
-          console.error(`❌ Failed to fetch file from bucket: ${response.status} ${response.statusText}`);
-          res.status(404).json({ error: 'File not found in bucket' });
+          fastify.log.error(`Failed to fetch file from bucket: ${response.status} ${response.statusText}`);
+          return reply.status(404).send({ error: 'File not found in bucket' });
         }
       } else {
-        // Fallback: try to fetch and proxy the file
         const response = await fetch(signedUrl);
         if (response.ok) {
           const buffer = await response.arrayBuffer();
           const contentType = response.headers.get('Content-Type') || 'application/octet-stream';
           
-          // Set CORS headers
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'GET');
-          res.setHeader('Content-Type', contentType);
-          res.setHeader('Content-Length', buffer.byteLength);
+          reply.header('Access-Control-Allow-Origin', '*');
+          reply.header('Access-Control-Allow-Methods', 'GET');
+          reply.type(contentType);
           
-          res.send(Buffer.from(buffer));
+          return reply.send(Buffer.from(buffer));
         } else {
-          console.error(`❌ Fallback fetch failed: ${response.status} ${response.statusText}`);
-          res.status(404).json({ error: 'File not found' });
+          fastify.log.error(`Fallback fetch failed: ${response.status} ${response.statusText}`);
+          return reply.status(404).send({ error: 'File not found' });
         }
       }
     } catch (error: any) {
-      console.error(`❌ Error serving file ${filename}:`, {
-        message: error.message,
-        stack: error.stack,
-        name: error.name,
-      });
-      res.status(500).json({ 
+      fastify.log.error(`Error serving file ${filename}:`, error);
+      return reply.status(500).send({ 
         error: 'Failed to serve file',
         details: error.message 
       });
@@ -153,7 +137,7 @@ if (!usingBucket) {
 }
 
 // Public routes (no authentication required)
-app.get('/health', async (req, res) => {
+fastify.get('/health', async (request, reply) => {
   try {
     const dbStatus = {
       type: process.env.DATABASE_URL ? 'PostgreSQL' : 'File-based',
@@ -162,22 +146,22 @@ app.get('/health', async (req, res) => {
 
     if (process.env.DATABASE_URL) {
       try {
-        await db.getTemplates(); // Test database connection
+        await db.getTemplates();
         dbStatus.connected = true;
       } catch (error) {
         dbStatus.connected = false;
       }
     } else {
-      dbStatus.connected = true; // File-based always works
+      dbStatus.connected = true;
     }
 
-    res.json({ 
+    return reply.send({ 
       status: 'ok', 
       timestamp: new Date().toISOString(),
       database: dbStatus
     });
   } catch (error) {
-    res.status(500).json({ 
+    return reply.status(500).send({ 
       status: 'error', 
       timestamp: new Date().toISOString(),
       error: 'Health check failed'
@@ -185,77 +169,95 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// Apply authentication middleware to all API routes
-// Public routes (health, file serving) are defined before this
-console.log('🔒 Securing all API routes with authentication middleware');
+// Apply authentication hook to all API routes
+fastify.addHook('onRequest', async (request, reply) => {
+  // Skip authentication for public routes
+  if (request.url === '/health' || request.url.startsWith('/uploads/')) {
+    return;
+  }
+  
+  // Apply authentication to all /api routes
+  if (request.url.startsWith('/api/')) {
+    await authenticateToken(request, reply);
+  }
+});
 
-// All API routes require authentication
-app.use('/api', authenticateToken);
+// Register API routes (all require authentication via hook)
+await fastify.register(caseTemplatesRoutes, { prefix: '/api/case-templates' });
+await fastify.register(clientsRoutes, { prefix: '/api/clients' });
+await fastify.register(usersRoutes, { prefix: '/api/users' });
+await fastify.register(settingsRoutes, { prefix: '/api/settings' });
+await fastify.register(remindersRoutes, { prefix: '/api/reminders' });
+await fastify.register(financialRoutes, { prefix: '/api/financial' });
 
-// API routes (all require authentication)
-app.use('/api/case-templates', caseTemplatesRoutes);
-app.use('/api/clients', clientsRoutes);
-app.use('/api/users', usersRoutes);
-app.use('/api/settings', settingsRoutes);
-app.use('/api/reminders', remindersRoutes);
-app.use('/api/financial', financialRoutes);
-
-// Protected API endpoint: Check if a file exists (requires authentication)
-app.get('/api/files/check', async (req, res) => {
+// Protected API endpoint: Check if a file exists
+fastify.get('/api/files/check', async (request, reply) => {
   try {
-    const fileUrl = req.query.url as string;
+    const fileUrl = (request.query as any).url as string;
     if (!fileUrl) {
-      return res.status(400).json({ error: 'File URL is required' });
+      return reply.status(400).send({ error: 'File URL is required' });
     }
 
     const exists = await fileExists(fileUrl);
     
-    res.json({ 
+    return reply.send({ 
       exists,
       url: fileUrl 
     });
   } catch (error: any) {
-    console.error('Error checking file existence:', error);
-    res.status(500).json({ error: 'Failed to check file existence' });
+    fastify.log.error('Error checking file existence:', error);
+    return reply.status(500).send({ error: 'Failed to check file existence' });
   }
 });
 
 // 404 handler for undefined API routes
-app.use('/api/*', (req, res) => {
-  res.status(404).json({ error: 'API endpoint not found' });
-});
-
-app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`🚀 Backend API server running on http://localhost:${PORT}`);
-  console.log(`🌐 Server accessible on all network interfaces`);
-  console.log(`📡 API endpoints available at http://localhost:${PORT}/api`);
-  
-  if (process.env.DATABASE_URL) {
-    console.log(`💾 Database: PostgreSQL (Railway)`);
-    console.log(`   DATABASE_URL: ${process.env.DATABASE_URL.substring(0, 20)}...`);
-    try {
-      // Test database connection
-      await db.getTemplates();
-      console.log(`✅ Database connection verified`);
-    } catch (error: any) {
-      console.error(`❌ Database connection failed: ${error.message}`);
-      console.log(`⚠️  Using file-based storage as fallback`);
+fastify.setNotFoundHandler({
+  preHandler: async (request, reply) => {
+    if (request.url.startsWith('/api/')) {
+      return reply.status(404).send({ error: 'API endpoint not found' });
     }
-  } else {
-    console.log(`💾 Storage: File-based (Local)`);
-    console.log(`   No DATABASE_URL found - using local file storage`);
   }
-  
-  if (isUsingBucketStorage()) {
-    console.log(`📁 File Storage: Railway Bucket`);
-    console.log(`   Bucket: ${process.env.RAILWAY_BUCKET_NAME || 'Not configured'}`);
-    console.log(`   Endpoint: ${process.env.RAILWAY_BUCKET_ENDPOINT || 'Not configured'}`);
-    console.log(`   Region: ${process.env.RAILWAY_BUCKET_REGION || 'auto'}`);
-  } else {
-    const uploadsDir = db.getUploadsDir();
-    console.log(`📁 Uploads directory: ${uploadsDir}`);
-  }
-  
-  console.log(`\n🔍 Check /health endpoint for database status`);
 });
 
+// Start server
+const start = async () => {
+  try {
+    await fastify.listen({ port: PORT, host: '0.0.0.0' });
+    
+    console.log(`🚀 Backend API server running on http://localhost:${PORT}`);
+    console.log(`🌐 Server accessible on all network interfaces`);
+    console.log(`📡 API endpoints available at http://localhost:${PORT}/api`);
+    
+    if (process.env.DATABASE_URL) {
+      console.log(`💾 Database: PostgreSQL (Railway)`);
+      console.log(`   DATABASE_URL: ${process.env.DATABASE_URL.substring(0, 20)}...`);
+      try {
+        await db.getTemplates();
+        console.log(`✅ Database connection verified`);
+      } catch (error: any) {
+        console.error(`❌ Database connection failed: ${error.message}`);
+        console.log(`⚠️  Using file-based storage as fallback`);
+      }
+    } else {
+      console.log(`💾 Storage: File-based (Local)`);
+      console.log(`   No DATABASE_URL found - using local file storage`);
+    }
+    
+    if (isUsingBucketStorage()) {
+      console.log(`📁 File Storage: Railway Bucket`);
+      console.log(`   Bucket: ${process.env.RAILWAY_BUCKET_NAME || 'Not configured'}`);
+      console.log(`   Endpoint: ${process.env.RAILWAY_BUCKET_ENDPOINT || 'Not configured'}`);
+      console.log(`   Region: ${process.env.RAILWAY_BUCKET_REGION || 'auto'}`);
+    } else {
+      const uploadsDir = db.getUploadsDir();
+      console.log(`📁 Uploads directory: ${uploadsDir}`);
+    }
+    
+    console.log(`\n🔍 Check /health endpoint for database status`);
+  } catch (err) {
+    fastify.log.error(err);
+    process.exit(1);
+  }
+};
+
+start();
