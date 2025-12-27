@@ -54,12 +54,27 @@ if (!usingBucket) {
   console.log(`📁 Using Railway bucket storage for file serving`);
   // Proxy files from Railway bucket (serve through our domain instead of redirecting)
   app.get('/uploads/:filename', async (req, res) => {
-    const filename = req.params.filename;
+    const filename = decodeURIComponent(req.params.filename); // Decode URL-encoded filenames
     console.log(`📁 Serving file from bucket: ${filename}`);
     
     try {
       // Try relative path first (standard format)
       let fileUrl = `/uploads/${filename}`;
+      
+      // First, check if file exists
+      const { fileExists } = await import('./utils/storage.js');
+      const exists = await fileExists(fileUrl);
+      
+      if (!exists) {
+        console.error(`❌ File does not exist: ${filename}`);
+        return res.status(404).json({ 
+          error: 'File not found',
+          filename: filename,
+          message: 'The requested file does not exist in storage'
+        });
+      }
+      
+      console.log(`✅ File exists, generating signed URL...`);
       
       // If the stored URL in database is a full URL, we need to handle it
       // But for serving, we'll use the relative path format
@@ -67,7 +82,11 @@ if (!usingBucket) {
       
       if (!signedUrl) {
         console.error(`❌ Failed to generate signed URL for: ${filename}`);
-        return res.status(404).json({ error: 'File not found - could not generate access URL' });
+        return res.status(500).json({ 
+          error: 'Failed to generate file access URL',
+          filename: filename,
+          message: 'Could not create access URL for the file'
+        });
       }
       
       if (signedUrl.startsWith('http')) {
