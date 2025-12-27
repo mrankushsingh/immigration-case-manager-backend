@@ -45,8 +45,10 @@ initializeFirebaseAdmin();
 // For local storage, use express.static
 if (!isUsingBucketStorage()) {
   const uploadsDir = db.getUploadsDir();
+  console.log(`📁 Using local filesystem storage: ${uploadsDir}`);
   app.use('/uploads', express.static(uploadsDir));
 } else {
+  console.log(`📁 Using Railway bucket storage for file serving`);
   // Proxy files from Railway bucket (serve through our domain instead of redirecting)
   app.get('/uploads/:filename', async (req, res) => {
     const filename = req.params.filename;
