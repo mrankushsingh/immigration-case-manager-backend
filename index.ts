@@ -43,9 +43,12 @@ initializeFirebaseAdmin();
 // Serve uploaded files
 // For Railway bucket, files are served via signed URLs or proxy
 // For local storage, use express.static
-if (!isUsingBucketStorage()) {
+const usingBucket = isUsingBucketStorage();
+console.log(`📁 File storage mode: ${usingBucket ? 'Railway Bucket' : 'Local Filesystem'}`);
+
+if (!usingBucket) {
   const uploadsDir = db.getUploadsDir();
-  console.log(`📁 Using local filesystem storage: ${uploadsDir}`);
+  console.log(`📁 Local storage directory: ${uploadsDir}`);
   app.use('/uploads', express.static(uploadsDir));
 } else {
   console.log(`📁 Using Railway bucket storage for file serving`);
