@@ -6,6 +6,7 @@ import clientsRoutes from './routes/clients.js';
 import usersRoutes from './routes/users.js';
 import settingsRoutes from './routes/settings.js';
 import remindersRoutes from './routes/reminders.js';
+import analyticsRoutes from './routes/analytics.js';
 import { db } from './utils/database.js';
 import { isUsingBucketStorage, getFileUrl, fileExists } from './utils/storage.js';
 import { initializeFirebaseAdmin } from './utils/firebase.js';
@@ -184,6 +185,7 @@ await fastify.register(async (fastify) => {
   await fastify.register(usersRoutes, { prefix: '/users' });
   await fastify.register(settingsRoutes, { prefix: '/settings' });
   await fastify.register(remindersRoutes, { prefix: '/reminders' });
+  await fastify.register(analyticsRoutes, { prefix: '/analytics' });
   
   // Protected API endpoint: Check if a file exists
   fastify.get('/files/check', async (request, reply) => {
