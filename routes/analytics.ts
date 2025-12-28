@@ -194,6 +194,129 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
   });
+
+  // Get monthly summary for multiple months (for trend charts)
+  fastify.get('/monthly-trend', async (request: AuthenticatedRequest, reply) => {
+    try {
+      const { months = '6' } = request.query as { months?: string }; // Default to 6 months
+      const numberOfMonths = parseInt(months, 10) || 6;
+      
+      if (numberOfMonths < 1 || numberOfMonths > 24) {
+        return reply.status(400).send({ error: 'Number of months must be between 1 and 24' });
+      }
+      
+      const now = new Date();
+      const currentMonth = now.getMonth();
+      const currentYear = now.getFullYear();
+      
+      const trendData = [];
+      
+      // Get data for the last N months
+      for (let i = numberOfMonths - 1; i >= 0; i--) {
+        const targetDate = new Date(currentYear, currentMonth - i, 1);
+        const targetMonth = targetDate.getMonth();
+        const targetYear = targetDate.getFullYear();
+        
+        // Get all clients
+        const clients = await memoryDb.getClients();
+        
+        // Initialize counters
+        let totalRevenue = 0;
+        let totalAdvance = 0;
+        let totalDueOutstanding = 0;
+        let totalClients = 0;
+        let clientsWhoPaid = 0;
+        
+        // Iterate through all clients
+        for (const client of clients) {
+          if (!client.payment) {
+            continue;
+          }
+          
+          const totalFee = client.payment.totalFee || 0;
+          const paidAmount = client.payment.paidAmount || 0;
+          let runningPaidAmount = 0;
+          let hasPaymentInMonth = false;
+          let clientPaidInMonth = false;
+          
+          // Check if client has payments in this month
+          if (client.payment.payments && Array.isArray(client.payment.payments)) {
+            const sortedPayments = [...client.payment.payments].sort((a, b) => {
+              return new Date(a.date).getTime() - new Date(b.date).getTime();
+            });
+            
+            for (const payment of sortedPayments) {
+              if (!payment || !payment.date || !payment.amount) {
+                continue;
+              }
+              
+              const paymentDate = new Date(payment.date);
+              
+              if (
+                paymentDate.getMonth() === targetMonth &&
+                paymentDate.getFullYear() === targetYear
+              ) {
+                hasPaymentInMonth = true;
+                const paymentAmount = Number(payment.amount) || 0;
+                
+                if (paymentAmount > 0) {
+                  totalRevenue += paymentAmount;
+                  if (!clientPaidInMonth) {
+                    clientsWhoPaid++;
+                    clientPaidInMonth = true;
+                  }
+                  
+                  const dueBeforePayment = totalFee - runningPaidAmount;
+                  if (runningPaidAmount >= totalFee) {
+                    totalAdvance += paymentAmount;
+                  } else if (paymentAmount > dueBeforePayment) {
+                    const advanceAmount = paymentAmount - dueBeforePayment;
+                    totalAdvance += advanceAmount;
+                  }
+                  
+                  runningPaidAmount += paymentAmount;
+                }
+              } else {
+                runningPaidAmount += Number(payment.amount) || 0;
+              }
+            }
+          }
+          
+          // Check if client is active in this month
+          const createdDate = new Date(client.created_at);
+          const isActiveInMonth = 
+            (createdDate.getMonth() === targetMonth && createdDate.getFullYear() === targetYear) ||
+            hasPaymentInMonth;
+        
+          if (isActiveInMonth) {
+            totalClients++;
+            const outstanding = totalFee - paidAmount;
+            if (outstanding > 0) {
+              totalDueOutstanding += outstanding;
+            }
+          }
+        }
+        
+        trendData.push({
+          month: targetMonth + 1,
+          year: targetYear,
+          monthName: targetDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+          totalRevenue,
+          totalAdvance,
+          totalDue: totalDueOutstanding,
+          totalClients,
+          clientsWhoPaid,
+        });
+      }
+      
+      return reply.send({ data: trendData });
+    } catch (error: any) {
+      fastify.log.error('Error fetching monthly trend:', error);
+      return reply.status(500).send({ 
+        error: error.message || 'Failed to fetch monthly trend' 
+      });
+    }
+  });
 };
 
 export default analyticsRoutes;
