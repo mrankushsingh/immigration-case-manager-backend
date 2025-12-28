@@ -89,91 +89,100 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
       let totalPayments = 0;
       let totalPaymentReceived = 0;
       let totalAdvance = 0;
-      let totalDue = 0;
+      let totalDueOutstanding = 0; // Outstanding amount (what's still due)
       const clientsWhoPaid = new Set<string>();
       
       // Iterate through all clients
       for (const client of clients) {
-        if (!client.payment?.payments || !Array.isArray(client.payment.payments)) {
+        if (!client.payment) {
           continue;
         }
         
         const totalFee = client.payment.totalFee || 0;
+        const paidAmount = client.payment.paidAmount || 0;
         let runningPaidAmount = 0;
+        let hasPaymentInMonth = false;
         
-        // Process payments in chronological order
-        const sortedPayments = [...client.payment.payments].sort((a, b) => {
-          return new Date(a.date).getTime() - new Date(b.date).getTime();
-        });
-        
-        for (const payment of sortedPayments) {
-          if (!payment || !payment.date || !payment.amount) {
-            continue;
-          }
+        // Check if client has payments in this month
+        if (client.payment.payments && Array.isArray(client.payment.payments)) {
+          // Process payments in chronological order
+          const sortedPayments = [...client.payment.payments].sort((a, b) => {
+            return new Date(a.date).getTime() - new Date(b.date).getTime();
+          });
           
-          const paymentDate = new Date(payment.date);
-          
-          // Check if payment is in the target month and year
-          if (
-            paymentDate.getMonth() === targetMonth &&
-            paymentDate.getFullYear() === targetYear
-          ) {
-            const paymentAmount = Number(payment.amount) || 0;
-            
-            // Count all payments
-            totalPayments++;
-            
-            // Calculate what was due before this payment
-            const dueBeforePayment = totalFee - runningPaidAmount;
-            
-            // Determine payment status and advance
-            if (paymentAmount > 0) {
-              // Payment received (status = 'paid')
-              totalPaymentReceived += paymentAmount;
-              clientsWhoPaid.add(client.id);
-              
-              // Check if this is an advance payment
-              // Advance = payment made when already fully paid OR excess over due amount
-              if (runningPaidAmount >= totalFee) {
-                // Client already fully paid, this is advance
-                totalAdvance += paymentAmount;
-              } else if (paymentAmount > dueBeforePayment) {
-                // Payment exceeds due amount, excess is advance
-                const advanceAmount = paymentAmount - dueBeforePayment;
-                totalAdvance += advanceAmount;
-                totalDue += dueBeforePayment; // The due portion
-              } else {
-                // Normal payment, not advance
-                totalDue += paymentAmount;
-              }
-              
-              runningPaidAmount += paymentAmount;
+          for (const payment of sortedPayments) {
+            if (!payment || !payment.date || !payment.amount) {
+              continue;
             }
-          } else {
-            // Payment not in target month, but update running total for advance calculation
-            runningPaidAmount += Number(payment.amount) || 0;
+            
+            const paymentDate = new Date(payment.date);
+            
+            // Check if payment is in the target month and year
+            if (
+              paymentDate.getMonth() === targetMonth &&
+              paymentDate.getFullYear() === targetYear
+            ) {
+              hasPaymentInMonth = true;
+              const paymentAmount = Number(payment.amount) || 0;
+              
+              // Count all payments
+              totalPayments++;
+              
+              // Calculate what was due before this payment
+              const dueBeforePayment = totalFee - runningPaidAmount;
+              
+              // Determine payment status and advance
+              if (paymentAmount > 0) {
+                // Payment received (status = 'paid')
+                totalPaymentReceived += paymentAmount;
+                clientsWhoPaid.add(client.id);
+                
+                // Check if this is an advance payment
+                // Advance = payment made when already fully paid OR excess over due amount
+                if (runningPaidAmount >= totalFee) {
+                  // Client already fully paid, this is advance
+                  totalAdvance += paymentAmount;
+                } else if (paymentAmount > dueBeforePayment) {
+                  // Payment exceeds due amount, excess is advance
+                  const advanceAmount = paymentAmount - dueBeforePayment;
+                  totalAdvance += advanceAmount;
+                }
+                
+                runningPaidAmount += paymentAmount;
+              }
+            } else {
+              // Payment not in target month, but update running total for advance calculation
+              runningPaidAmount += Number(payment.amount) || 0;
+            }
           }
         }
         
-        // Check if client is active (has payments or created in this month)
+        // Calculate outstanding due for clients active in this month
         const createdDate = new Date(client.created_at);
-        if (
+        const isActiveInMonth = 
           (createdDate.getMonth() === targetMonth && createdDate.getFullYear() === targetYear) ||
-          sortedPayments.some(p => {
-            const pDate = new Date(p.date);
-            return pDate.getMonth() === targetMonth && pDate.getFullYear() === targetYear;
-          })
-        ) {
+          hasPaymentInMonth;
+        
+        if (isActiveInMonth) {
           activeClientIds.add(client.id);
+          // Calculate outstanding amount (what's still due)
+          const outstanding = totalFee - paidAmount;
+          if (outstanding > 0) {
+            totalDueOutstanding += outstanding;
+          }
         }
       }
+      
+      // Total Revenue = Payment Received (which includes due payments + advance payments)
+      const totalRevenue = totalPaymentReceived;
       
       return reply.send({
         totalClients: activeClientIds.size,
         totalPayments: totalPayments,
         totalPaymentReceived: totalPaymentReceived,
         totalAdvance: totalAdvance,
-        totalDue: totalDue,
+        totalDue: totalDueOutstanding, // Outstanding amount
+        totalRevenue: totalRevenue, // Total revenue = Payment Received
         clientsWhoPaid: clientsWhoPaid.size,
         month: targetMonth + 1, // Return 1-indexed month
         year: targetYear,
