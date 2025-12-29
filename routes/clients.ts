@@ -5,7 +5,8 @@ import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import { db } from '../utils/database.js';
 import { uploadFile, deleteFile, isUsingBucketStorage } from '../utils/storage.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
-import { rateLimitConfig, registerRateLimit } from '../middleware/rateLimit.js';
+import { sanitizeFilename, sanitizeString, sanitizeEmail, sanitizePhone, sanitizeText } from '../utils/sanitize.js';
+import { getSafeErrorMessage } from '../utils/errors.js';
 
 const memoryDb = db;
 
@@ -82,9 +83,11 @@ function saveFileLocally(buffer: Buffer, originalName: string): string {
     mkdirSync(uploadsDir, { recursive: true });
   }
 
+  // Sanitize filename to prevent path traversal
+  const sanitizedName = sanitizeFilename(originalName);
   const uniqueSuffix = `${Date.now()}_${Math.round(Math.random() * 1E9)}`;
-  const ext = extname(originalName);
-  const name = originalName.replace(ext, '').replace(/[^a-zA-Z0-9]/g, '_');
+  const ext = extname(sanitizedName);
+  const name = sanitizedName.replace(ext, '').replace(/[^a-zA-Z0-9]/g, '_');
   const fileName = `${name}_${uniqueSuffix}${ext}`;
   const filePath = `${uploadsDir}/${fileName}`;
 
@@ -106,17 +109,25 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       const { firstName, lastName, parentName, email, phone, caseTemplateId, totalFee, details } = request.body as any;
       
-      if (!firstName || typeof firstName !== 'string' || !firstName.trim()) {
+      // Sanitize all string inputs to prevent XSS
+      const sanitizedFirstName = sanitizeString(firstName);
+      const sanitizedLastName = sanitizeString(lastName);
+      const sanitizedParentName = parentName ? sanitizeString(parentName) : null;
+      const sanitizedEmail = email ? sanitizeEmail(email) : null;
+      const sanitizedPhone = phone ? sanitizePhone(phone) : null;
+      const sanitizedDetails = details ? sanitizeText(details) : null;
+      
+      if (!sanitizedFirstName || sanitizedFirstName.length === 0) {
         return reply.status(400).send({ error: 'First name is required and must be a non-empty string' });
       }
       
-      if (!lastName || typeof lastName !== 'string' || !lastName.trim()) {
+      if (!sanitizedLastName || sanitizedLastName.length === 0) {
         return reply.status(400).send({ error: 'Last name is required and must be a non-empty string' });
       }
       
-      if (email && typeof email === 'string') {
+      if (sanitizedEmail && sanitizedEmail.length > 0) {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
+        if (!emailRegex.test(sanitizedEmail)) {
           return reply.status(400).send({ error: 'Invalid email format' });
         }
       }
@@ -151,14 +162,14 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const client = await memoryDb.insertClient({
-        first_name: firstName,
-        last_name: lastName,
-        parent_name: parentName || null,
-        email: email || null,
-        phone: phone || null,
+        first_name: sanitizedFirstName,
+        last_name: sanitizedLastName,
+        parent_name: sanitizedParentName || undefined,
+        email: sanitizedEmail || undefined,
+        phone: sanitizedPhone || undefined,
         case_template_id: caseTemplateId || null,
         case_type: caseType,
-        details: details || null,
+        details: sanitizedDetails || undefined,
         required_documents: requiredDocs,
         reminder_interval_days: reminderInterval,
         administrative_silence_days: adminSilenceDays,
@@ -180,7 +191,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
 
       return reply.status(201).send(client);
     } catch (error: any) {
-      return reply.status(500).send({ error: error.message || 'Failed to create client' });
+      return reply.status(500).send({ error: getSafeErrorMessage(error, 'Failed to create client') });
     }
   });
 
@@ -190,7 +201,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       const clients = await memoryDb.getClients();
       return reply.send(clients);
     } catch (error: any) {
-      return reply.status(500).send({ error: error.message || 'Failed to fetch clients' });
+      return reply.status(500).send({ error: getSafeErrorMessage(error, 'Failed to fetch clients') });
     }
   });
 
@@ -218,7 +229,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
     } catch (error: any) {
       const clientId = (request.params as { id?: string })?.id || 'unknown';
       fastify.log.error(`Error fetching client ${clientId}: ${error.message || error} - ${error.stack || 'no stack'} - URL: ${request.url}, Method: ${request.method}`);
-      return reply.status(500).send({ error: error.message || 'Failed to fetch client' });
+      return reply.status(500).send({ error: getSafeErrorMessage(error, 'Failed to fetch client') });
     }
   });
 
@@ -244,8 +255,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       const clientId = (request.params as { id?: string })?.id || 'unknown';
       fastify.log.error(`Error updating client ${clientId}: ${error.message || error} - ${error.stack || 'no stack'}`);
       return reply.status(500).send({ 
-        error: error.message || 'Failed to update client',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        error: getSafeErrorMessage(error, 'Failed to update client')
       });
     }
   });
@@ -281,7 +291,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
         url: request.url,
         method: request.method,
       }, `Error deleting client ${clientId}`);
-      return reply.status(500).send({ error: error.message || 'Failed to delete client' });
+      return reply.status(500).send({ error: getSafeErrorMessage(error, 'Failed to delete client') });
     }
   });
 
@@ -347,7 +357,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       if (error.message && error.message.includes('File size')) {
         return reply.status(400).send({ error: 'File size exceeds 50MB limit' });
       }
-      return reply.status(500).send({ error: error.message || 'Failed to upload document' });
+      return reply.status(500).send({ error: getSafeErrorMessage(error, 'Failed to upload document') });
     }
   });
 
@@ -457,7 +467,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       if (error.message && error.message.includes('File size')) {
         return reply.status(400).send({ error: 'File size exceeds 50MB limit' });
       }
-      return reply.status(500).send({ error: error.message || 'Failed to create additional document' });
+      return reply.status(500).send({ error: getSafeErrorMessage(error, 'Failed to create additional document') });
     }
   });
 
@@ -497,7 +507,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
 
       return reply.send(updated);
     } catch (error: any) {
-      return reply.status(500).send({ error: error.message || 'Failed to update additional document' });
+      return reply.status(500).send({ error: getSafeErrorMessage(error, 'Failed to update additional document') });
     }
   });
 
@@ -554,7 +564,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
 
       return reply.send(updated);
     } catch (error: any) {
-      return reply.status(500).send({ error: error.message || 'Failed to upload file' });
+      return reply.status(500).send({ error: getSafeErrorMessage(error, 'Failed to upload file') });
     }
   });
 
@@ -592,7 +602,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
 
       return reply.send(updated);
     } catch (error: any) {
-      return reply.status(500).send({ error: error.message || 'Failed to remove document' });
+      return reply.status(500).send({ error: getSafeErrorMessage(error, 'Failed to remove document') });
     }
   });
 

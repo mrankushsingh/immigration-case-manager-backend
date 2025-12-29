@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import staticFiles from '@fastify/static';
+import helmet from '@fastify/helmet';
 import caseTemplatesRoutes from './routes/caseTemplates.js';
 import clientsRoutes from './routes/clients.js';
 import usersRoutes from './routes/users.js';
@@ -42,6 +43,27 @@ await fastify.register(cors, {
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 });
+
+// Register security headers
+await fastify.register(helmet, {
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false, // Allow file uploads
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // Allow file access
+});
+
+fastify.log.info('✅ Security headers enabled via Helmet');
 
 // Initialize Firebase Admin SDK
 initializeFirebaseAdmin();
