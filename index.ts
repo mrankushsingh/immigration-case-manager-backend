@@ -10,7 +10,7 @@ import analyticsRoutes from './routes/analytics.js';
 import { db } from './utils/database.js';
 import { isUsingBucketStorage, getFileUrl, fileExists } from './utils/storage.js';
 import { initializeFirebaseAdmin } from './utils/firebase.js';
-import { authenticateToken } from './middleware/auth.js';
+import { authenticateToken, AuthenticatedRequest } from './middleware/auth.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -188,7 +188,7 @@ await fastify.register(async (fastify) => {
   await fastify.register(analyticsRoutes, { prefix: '/analytics' });
   
   // Protected API endpoint: Check if a file exists
-  fastify.get('/files/check', async (request, reply) => {
+  fastify.get('/files/check', async (request: AuthenticatedRequest, reply) => {
     try {
       const fileUrl = (request.query as any).url as string;
       if (!fileUrl) {

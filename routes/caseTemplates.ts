@@ -1,9 +1,10 @@
 import { FastifyPluginAsync } from 'fastify';
 import { db } from '../utils/database.js';
+import { AuthenticatedRequest } from '../middleware/auth.js';
 const memoryDb = db;
 
 const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.post('/', async (request, reply) => {
+  fastify.post('/', async (request: AuthenticatedRequest, reply) => {
     try {
       const { name, description, requiredDocuments, reminderIntervalDays, administrativeSilenceDays } = request.body as any;
       
@@ -43,7 +44,7 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  fastify.get('/', async (request, reply) => {
+  fastify.get('/', async (request: AuthenticatedRequest, reply) => {
     try {
       const templates = await memoryDb.getTemplates();
       return reply.send(templates);
@@ -52,7 +53,7 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  fastify.get('/:id', async (request, reply) => {
+  fastify.get('/:id', async (request: AuthenticatedRequest, reply) => {
     try {
       const { id } = request.params as { id: string };
       const template = await memoryDb.getTemplate(id);
@@ -63,7 +64,7 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  fastify.put('/:id', async (request, reply) => {
+  fastify.put('/:id', async (request: AuthenticatedRequest, reply) => {
     try {
       const { id } = request.params as { id: string };
       const { name, description, requiredDocuments, reminderIntervalDays, administrativeSilenceDays } = request.body as any;
@@ -159,7 +160,7 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  fastify.delete('/:id', async (request, reply) => {
+  fastify.delete('/:id', async (request: AuthenticatedRequest, reply) => {
     try {
       const { id } = request.params as { id: string };
       const deleted = await memoryDb.deleteTemplate(id);
