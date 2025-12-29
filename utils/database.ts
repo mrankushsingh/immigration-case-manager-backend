@@ -879,65 +879,89 @@ class DatabaseAdapter {
 
   async deleteClient(id: string): Promise<boolean> {
     await this.ensureInitialized();
-    const client = await this.getClient(id);
-    if (client) {
-      // Delete associated files using the storage utility (handles both local and bucket)
-      try {
-        const { deleteFile } = await import('./storage.js');
+    
+    try {
+      const client = await this.getClient(id);
+      if (client) {
+        // Delete associated files using the storage utility (handles both local and bucket)
+        try {
+          const { deleteFile } = await import('./storage.js');
 
-        // Helper function to delete files from a document array
-        const deleteFilesFromArray = async (docArray: any[]) => {
-          if (!Array.isArray(docArray)) return;
-          for (const doc of docArray) {
-            if (doc && doc.fileUrl && typeof doc.fileUrl === 'string' && doc.fileUrl.startsWith('/uploads/')) {
-              try {
-                await deleteFile(doc.fileUrl);
-              } catch (error) {
-                console.error(`Error deleting file ${doc.fileUrl}:`, error);
-                // Continue deleting other files even if one fails
+          // Helper function to delete files from a document array
+          const deleteFilesFromArray = async (docArray: any[]) => {
+            if (!Array.isArray(docArray)) return;
+            for (const doc of docArray) {
+              if (doc && doc.fileUrl && typeof doc.fileUrl === 'string') {
+                // Handle both /uploads/ format and any other valid file URL
+                if (doc.fileUrl.startsWith('/uploads/')) {
+                  try {
+                    await deleteFile(doc.fileUrl);
+                  } catch (error) {
+                    console.error(`Error deleting file ${doc.fileUrl} for client ${id}:`, error);
+                    // Continue deleting other files even if one fails
+                  }
+                } else {
+                  console.warn(`Skipping file deletion for non-standard URL format: ${doc.fileUrl}`);
+                }
               }
             }
+          };
+
+          // Delete files from all document arrays
+          if (client.required_documents) {
+            await deleteFilesFromArray(client.required_documents);
           }
-        };
-
-        // Delete files from all document arrays
-        if (client.required_documents) {
-          await deleteFilesFromArray(client.required_documents);
+          if (client.additional_documents) {
+            await deleteFilesFromArray(client.additional_documents);
+          }
+          if (client.requested_documents) {
+            await deleteFilesFromArray(client.requested_documents);
+          }
+          if (client.aportar_documentacion) {
+            await deleteFilesFromArray(client.aportar_documentacion);
+          }
+          if (client.requerimiento) {
+            await deleteFilesFromArray(client.requerimiento);
+          }
+          if (client.resolucion) {
+            await deleteFilesFromArray(client.resolucion);
+          }
+          if (client.justificante_presentacion) {
+            await deleteFilesFromArray(client.justificante_presentacion);
+          }
+        } catch (error) {
+          console.error(`Error deleting client files for client ${id}:`, error);
+          // Continue with client deletion even if file deletion fails
         }
-        if (client.additional_documents) {
-          await deleteFilesFromArray(client.additional_documents);
-        }
-        if (client.requested_documents) {
-          await deleteFilesFromArray(client.requested_documents);
-        }
-        if (client.aportar_documentacion) {
-          await deleteFilesFromArray(client.aportar_documentacion);
-        }
-        if (client.requerimiento) {
-          await deleteFilesFromArray(client.requerimiento);
-        }
-        if (client.resolucion) {
-          await deleteFilesFromArray(client.resolucion);
-        }
-        if (client.justificante_presentacion) {
-          await deleteFilesFromArray(client.justificante_presentacion);
-        }
-      } catch (error) {
-        console.error('Error deleting client files:', error);
-        // Continue with client deletion even if file deletion fails
       }
-    }
 
-    if (this.usePostgres && this.pool) {
-      const result = await this.pool.query('DELETE FROM clients WHERE id = $1', [id]);
-      return (result.rowCount ?? 0) > 0;
-    }
+      // Delete from database
+      if (this.usePostgres && this.pool) {
+        try {
+          const result = await this.pool.query('DELETE FROM clients WHERE id = $1', [id]);
+          const deleted = (result.rowCount ?? 0) > 0;
+          if (!deleted) {
+            console.warn(`Client ${id} not found in database for deletion`);
+          }
+          return deleted;
+        } catch (error) {
+          console.error(`Database error deleting client ${id}:`, error);
+          throw error; // Re-throw to be caught by the route handler
+        }
+      }
 
-    const deleted = this.clients.delete(id);
-    if (deleted) {
-      this.saveClients();
+      // Delete from in-memory storage
+      const deleted = this.clients.delete(id);
+      if (deleted) {
+        this.saveClients();
+      } else {
+        console.warn(`Client ${id} not found in memory storage for deletion`);
+      }
+      return deleted;
+    } catch (error) {
+      console.error(`Error in deleteClient for client ${id}:`, error);
+      throw error; // Re-throw to be caught by the route handler
     }
-    return deleted;
   }
 
   // User management methods

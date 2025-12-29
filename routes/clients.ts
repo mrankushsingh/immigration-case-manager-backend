@@ -273,7 +273,13 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({ message: 'Client deleted successfully' });
     } catch (error: any) {
       const clientId = (request.params as { id?: string })?.id || 'unknown';
-      fastify.log.error(`Error deleting client ${clientId}: ${error.message || error} - ${error.stack || 'no stack'}`);
+      fastify.log.error({
+        err: error,
+        clientId,
+        params: request.params,
+        url: request.url,
+        method: request.method,
+      }, `Error deleting client ${clientId}`);
       return reply.status(500).send({ error: error.message || 'Failed to delete client' });
     }
   });
