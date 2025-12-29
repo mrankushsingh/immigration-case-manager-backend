@@ -881,36 +881,50 @@ class DatabaseAdapter {
     await this.ensureInitialized();
     const client = await this.getClient(id);
     if (client) {
-      // Delete associated files
+      // Delete associated files using the storage utility (handles both local and bucket)
       try {
-        const { unlinkSync, existsSync } = await import('fs');
-        const { join } = await import('path');
-        const uploadsDir = this.getUploadsDir();
+        const { deleteFile } = await import('./storage.js');
 
-        // Delete required document files
+        // Helper function to delete files from a document array
+        const deleteFilesFromArray = async (docArray: any[]) => {
+          if (!Array.isArray(docArray)) return;
+          for (const doc of docArray) {
+            if (doc && doc.fileUrl && typeof doc.fileUrl === 'string' && doc.fileUrl.startsWith('/uploads/')) {
+              try {
+                await deleteFile(doc.fileUrl);
+              } catch (error) {
+                console.error(`Error deleting file ${doc.fileUrl}:`, error);
+                // Continue deleting other files even if one fails
+              }
+            }
+          }
+        };
+
+        // Delete files from all document arrays
         if (client.required_documents) {
-          for (const doc of client.required_documents) {
-            if (doc.fileUrl && doc.fileUrl.startsWith('/uploads/')) {
-              const filePath = join(uploadsDir, doc.fileUrl.replace('/uploads/', ''));
-              if (existsSync(filePath)) {
-                unlinkSync(filePath);
-              }
-            }
-          }
+          await deleteFilesFromArray(client.required_documents);
         }
-        // Delete additional document files
         if (client.additional_documents) {
-          for (const doc of client.additional_documents) {
-            if (doc.fileUrl && doc.fileUrl.startsWith('/uploads/')) {
-              const filePath = join(uploadsDir, doc.fileUrl.replace('/uploads/', ''));
-              if (existsSync(filePath)) {
-                unlinkSync(filePath);
-              }
-            }
-          }
+          await deleteFilesFromArray(client.additional_documents);
+        }
+        if (client.requested_documents) {
+          await deleteFilesFromArray(client.requested_documents);
+        }
+        if (client.aportar_documentacion) {
+          await deleteFilesFromArray(client.aportar_documentacion);
+        }
+        if (client.requerimiento) {
+          await deleteFilesFromArray(client.requerimiento);
+        }
+        if (client.resolucion) {
+          await deleteFilesFromArray(client.resolucion);
+        }
+        if (client.justificante_presentacion) {
+          await deleteFilesFromArray(client.justificante_presentacion);
         }
       } catch (error) {
         console.error('Error deleting client files:', error);
+        // Continue with client deletion even if file deletion fails
       }
     }
 

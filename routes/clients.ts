@@ -92,9 +92,12 @@ function saveFileLocally(buffer: Buffer, originalName: string): string {
 }
 
 const clientsRoutes: FastifyPluginAsync = async (fastify) => {
-  // Register multipart plugin
+  // Register multipart plugin with configuration that won't interfere with GET/DELETE requests
+  // The plugin only processes requests with multipart content-type, so GET requests are unaffected
   await fastify.register(multipart, {
     limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+    attachFieldsToBody: false, // Don't auto-attach to body
+    throwFileSizeLimit: false, // Don't throw on size limit, return error instead
   });
 
   // Create client
@@ -194,10 +197,32 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/:id', async (request: AuthenticatedRequest, reply) => {
     try {
       const { id } = request.params as { id: string };
-      const client = await memoryDb.getClient(id);
-      if (!client) return reply.status(404).send({ error: 'Client not found' });
+      
+      if (!id || typeof id !== 'string' || id.trim().length === 0) {
+        fastify.log.warn(`Invalid client ID in request: ${id}`);
+        return reply.status(400).send({ error: 'Invalid client ID' });
+      }
+      
+      const trimmedId = id.trim();
+      fastify.log.info(`Fetching client with ID: ${trimmedId}`);
+      
+      const client = await memoryDb.getClient(trimmedId);
+      if (!client) {
+        fastify.log.warn(`Client not found: ${trimmedId}`);
+        return reply.status(404).send({ error: 'Client not found' });
+      }
+      
+      fastify.log.info(`Client found: ${trimmedId}`);
       return reply.send(client);
     } catch (error: any) {
+      const clientId = (request.params as { id?: string })?.id || 'unknown';
+      fastify.log.error(`Error fetching client ${clientId}:`, {
+        error: error.message,
+        stack: error.stack,
+        params: request.params,
+        url: request.url,
+        method: request.method,
+      });
       return reply.status(500).send({ error: error.message || 'Failed to fetch client' });
     }
   });
@@ -234,10 +259,30 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.delete('/:id', async (request: AuthenticatedRequest, reply) => {
     try {
       const { id } = request.params as { id: string };
-      const deleted = await memoryDb.deleteClient(id);
-      if (!deleted) return reply.status(404).send({ error: 'Client not found' });
+      
+      if (!id || typeof id !== 'string' || id.trim().length === 0) {
+        fastify.log.warn(`Invalid client ID for deletion: ${id}`);
+        return reply.status(400).send({ error: 'Invalid client ID' });
+      }
+      
+      const trimmedId = id.trim();
+      fastify.log.info(`Deleting client: ${trimmedId}`);
+      
+      const deleted = await memoryDb.deleteClient(trimmedId);
+      
+      if (!deleted) {
+        fastify.log.warn(`Client not found for deletion: ${trimmedId}`);
+        return reply.status(404).send({ error: 'Client not found' });
+      }
+      
+      fastify.log.info(`Client deleted successfully: ${trimmedId}`);
       return reply.send({ message: 'Client deleted successfully' });
     } catch (error: any) {
+      const clientId = (request.params as { id?: string })?.id || 'unknown';
+      fastify.log.error(`Error deleting client ${clientId}:`, {
+        error: error.message,
+        stack: error.stack,
+      });
       return reply.status(500).send({ error: error.message || 'Failed to delete client' });
     }
   });
