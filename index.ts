@@ -11,6 +11,7 @@ import { db } from './utils/database.js';
 import { isUsingBucketStorage, getFileUrl, fileExists } from './utils/storage.js';
 import { initializeFirebaseAdmin } from './utils/firebase.js';
 import { authenticateToken, AuthenticatedRequest } from './middleware/auth.js';
+import { rateLimitConfig, registerRateLimit } from './middleware/rateLimit.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -174,18 +175,45 @@ fastify.get('/health', async (request, reply) => {
 // Apply authentication middleware to all API routes
 fastify.log.info('🔒 Securing all API routes with authentication middleware');
 
-// Register authenticated routes
+// Register authenticated routes with rate limiting
 await fastify.register(async (fastify) => {
   // Apply authentication to all routes in this context
   fastify.addHook('onRequest', authenticateToken);
   
-  // Register route plugins
+  // Apply general rate limiting to all API routes (100 requests per 15 minutes)
+  await registerRateLimit(fastify, rateLimitConfig.general);
+  fastify.log.info('✅ Rate limiting enabled: 100 requests per 15 minutes (general)');
+  
+  // Register route plugins with specific rate limits
+  // Case Templates - general limit
   await fastify.register(caseTemplatesRoutes, { prefix: '/case-templates' });
+  
+  // Clients - general limit (file uploads have stricter limits in route)
   await fastify.register(clientsRoutes, { prefix: '/clients' });
-  await fastify.register(usersRoutes, { prefix: '/users' });
-  await fastify.register(settingsRoutes, { prefix: '/settings' });
+  
+  // Users - sensitive operations (stricter limit)
+  await fastify.register(async (fastify) => {
+    await registerRateLimit(fastify, rateLimitConfig.sensitive);
+    await fastify.register(usersRoutes);
+  }, { prefix: '/users' });
+  fastify.log.info('✅ Rate limiting enabled: 10 requests per 15 minutes (users - sensitive)');
+  
+  // Settings - sensitive operations
+  await fastify.register(async (fastify) => {
+    await registerRateLimit(fastify, rateLimitConfig.sensitive);
+    await fastify.register(settingsRoutes);
+  }, { prefix: '/settings' });
+  fastify.log.info('✅ Rate limiting enabled: 10 requests per 15 minutes (settings - sensitive)');
+  
+  // Reminders - general limit
   await fastify.register(remindersRoutes, { prefix: '/reminders' });
-  await fastify.register(analyticsRoutes, { prefix: '/analytics' });
+  
+  // Analytics - moderate limit
+  await fastify.register(async (fastify) => {
+    await registerRateLimit(fastify, rateLimitConfig.analytics);
+    await fastify.register(analyticsRoutes);
+  }, { prefix: '/analytics' });
+  fastify.log.info('✅ Rate limiting enabled: 50 requests per 15 minutes (analytics)');
   
   // Protected API endpoint: Check if a file exists
   fastify.get('/files/check', async (request: AuthenticatedRequest, reply) => {

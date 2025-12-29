@@ -5,6 +5,7 @@ import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import { db } from '../utils/database.js';
 import { uploadFile, deleteFile, isUsingBucketStorage } from '../utils/storage.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
+import { rateLimitConfig, registerRateLimit } from '../middleware/rateLimit.js';
 
 const memoryDb = db;
 
