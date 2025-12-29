@@ -216,13 +216,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send(client);
     } catch (error: any) {
       const clientId = (request.params as { id?: string })?.id || 'unknown';
-      fastify.log.error(`Error fetching client ${clientId}:`, {
-        error: error.message,
-        stack: error.stack,
-        params: request.params,
-        url: request.url,
-        method: request.method,
-      });
+      fastify.log.error(`Error fetching client ${clientId}: ${error.message || error} - ${error.stack || 'no stack'} - URL: ${request.url}, Method: ${request.method}`);
       return reply.status(500).send({ error: error.message || 'Failed to fetch client' });
     }
   });
@@ -279,10 +273,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({ message: 'Client deleted successfully' });
     } catch (error: any) {
       const clientId = (request.params as { id?: string })?.id || 'unknown';
-      fastify.log.error(`Error deleting client ${clientId}:`, {
-        error: error.message,
-        stack: error.stack,
-      });
+      fastify.log.error(`Error deleting client ${clientId}: ${error.message || error} - ${error.stack || 'no stack'}`);
       return reply.status(500).send({ error: error.message || 'Failed to delete client' });
     }
   });
