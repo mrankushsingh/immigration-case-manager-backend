@@ -177,6 +177,149 @@ const usersRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(500).send({ error: error.message || 'Failed to delete user' });
     }
   });
+
+  // Export all data
+  fastify.get('/export/all', async (request: AuthenticatedRequest, reply) => {
+    try {
+      if (!request.user?.uid) {
+        return reply.status(401).send({ error: 'User not authenticated' });
+      }
+
+      const currentUser = await memoryDb.getUserByFirebaseUid(request.user.uid);
+      if (!currentUser || currentUser.role !== 'admin') {
+        return reply.status(403).send({ error: 'Admin access required' });
+      }
+
+      // Get all data
+      const clients = await memoryDb.getClients();
+      const users = await memoryDb.getUsers();
+      const templates = await memoryDb.getTemplates();
+
+      const exportData = {
+        exportDate: new Date().toISOString(),
+        version: '1.0',
+        data: {
+          clients,
+          users,
+          templates,
+        },
+        stats: {
+          totalClients: clients.length,
+          totalUsers: users.length,
+          totalTemplates: templates.length,
+        },
+      };
+
+      const jsonData = JSON.stringify(exportData, null, 2);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+      const filename = `data-export-${timestamp}.json`;
+
+      reply.header('Content-Type', 'application/json');
+      reply.header('Content-Disposition', `attachment; filename="${filename}"`);
+      
+      return reply.send(jsonData);
+    } catch (error: any) {
+      fastify.log.error('Error exporting data:', error);
+      return reply.status(500).send({ error: error.message || 'Failed to export data' });
+    }
+  });
+
+  // Import/Restore all data
+  fastify.post('/import/all', async (request: AuthenticatedRequest, reply) => {
+    try {
+      if (!request.user?.uid) {
+        return reply.status(401).send({ error: 'User not authenticated' });
+      }
+
+      const currentUser = await memoryDb.getUserByFirebaseUid(request.user.uid);
+      if (!currentUser || currentUser.role !== 'admin') {
+        return reply.status(403).send({ error: 'Admin access required' });
+      }
+
+      const { data } = request.body as { data: any };
+
+      if (!data || !data.data) {
+        return reply.status(400).send({ error: 'Invalid backup file format' });
+      }
+
+      const { clients, users, templates } = data.data;
+
+      const results = {
+        clients: { imported: 0, skipped: 0, errors: [] as string[] },
+        users: { imported: 0, skipped: 0, errors: [] as string[] },
+        templates: { imported: 0, skipped: 0, errors: [] as string[] },
+      };
+
+      // Import templates
+      if (Array.isArray(templates)) {
+        for (const template of templates) {
+          try {
+            const existing = await memoryDb.getTemplate(template.id);
+            if (existing) {
+              results.templates.skipped++;
+              continue;
+            }
+            // Remove id, created_at, updated_at for insert
+            const { id, created_at, updated_at, ...templateData } = template;
+            await memoryDb.insertTemplate(templateData);
+            results.templates.imported++;
+          } catch (error: any) {
+            results.templates.errors.push(`${template.name || template.id}: ${error.message}`);
+          }
+        }
+      }
+
+      // Import users (skip current user)
+      if (Array.isArray(users)) {
+        for (const user of users) {
+          try {
+            if (user.firebase_uid === request.user.uid) {
+              results.users.skipped++;
+              continue;
+            }
+            const existing = await memoryDb.getUserByFirebaseUid(user.firebase_uid);
+            if (existing) {
+              results.users.skipped++;
+              continue;
+            }
+            // Remove id, created_at, updated_at for insert
+            const { id, created_at, updated_at, ...userData } = user;
+            await memoryDb.insertUser(userData);
+            results.users.imported++;
+          } catch (error: any) {
+            results.users.errors.push(`${user.email || user.id}: ${error.message}`);
+          }
+        }
+      }
+
+      // Import clients
+      if (Array.isArray(clients)) {
+        for (const client of clients) {
+          try {
+            const existing = await memoryDb.getClient(client.id);
+            if (existing) {
+              results.clients.skipped++;
+              continue;
+            }
+            // Remove id, created_at, updated_at for insert
+            const { id, created_at, updated_at, ...clientData } = client;
+            await memoryDb.insertClient(clientData);
+            results.clients.imported++;
+          } catch (error: any) {
+            results.clients.errors.push(`${client.first_name} ${client.last_name}: ${error.message}`);
+          }
+        }
+      }
+
+      return reply.send({
+        message: 'Data imported successfully',
+        results,
+      });
+    } catch (error: any) {
+      fastify.log.error('Error importing data:', error);
+      return reply.status(500).send({ error: error.message || 'Failed to import data' });
+    }
+  });
 };
 
 export default usersRoutes;
