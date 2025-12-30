@@ -193,8 +193,8 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
       
-      // Total Revenue = Payment Received (which includes due payments + advance payments)
-      const totalRevenue = totalPaymentReceived;
+      // Total Revenue = Payment Received + Total Advance + Total Due
+      const totalRevenue = totalPaymentReceived + totalAdvance + totalDueOutstanding;
       
       const result = {
         totalClients: activeClientIds.size,
@@ -202,7 +202,7 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
         totalPaymentReceived: totalPaymentReceived,
         totalAdvance: totalAdvance,
         totalDue: totalDueOutstanding, // Outstanding amount
-        totalRevenue: totalRevenue, // Total revenue = Payment Received
+        totalRevenue: totalRevenue, // Total revenue = Payment Received + Advance + Due
         clientsWhoPaid: clientsWhoPaid.size,
         month: targetMonth + 1, // Return 1-indexed month
         year: targetYear,
@@ -246,7 +246,7 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
         const clients = await memoryDb.getClients();
         
         // Initialize counters
-        let totalRevenue = 0;
+        let totalPaymentReceived = 0; // Renamed for clarity
         let totalAdvance = 0;
         let totalDueOutstanding = 0;
         let totalClients = 0;
@@ -285,7 +285,7 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
                 const paymentAmount = Number(payment.amount) || 0;
                 
                 if (paymentAmount > 0) {
-                  totalRevenue += paymentAmount;
+                  totalPaymentReceived += paymentAmount;
                   if (!clientPaidInMonth) {
                     clientsWhoPaid++;
                     clientPaidInMonth = true;
@@ -322,11 +322,14 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
           }
         }
         
+        // Total Revenue = Payment Received + Total Advance + Total Due
+        const totalRevenue = totalPaymentReceived + totalAdvance + totalDueOutstanding;
+        
         trendData.push({
           month: targetMonth + 1,
           year: targetYear,
           monthName: targetDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-          totalRevenue,
+          totalRevenue, // Payment Received + Advance + Due
           totalAdvance,
           totalDue: totalDueOutstanding,
           totalClients,
