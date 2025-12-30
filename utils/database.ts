@@ -97,6 +97,10 @@ class DatabaseAdapter {
       this.pool = new Pool({
         connectionString: databaseUrl,
         ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+        max: 20, // Maximum pool size
+        min: 2, // Minimum pool size
+        idleTimeoutMillis: 30000, // Close idle connections after 30s
+        connectionTimeoutMillis: 2000, // Timeout after 2s
       });
       // Initialize database and store the promise
       this.dbInitialized = this.initPostgres();
@@ -310,6 +314,54 @@ class DatabaseAdapter {
         END $$;
       `);
 
+      // Create indexes for performance optimization
+      console.log('📊 Creating database indexes for performance...');
+      
+      // Clients table indexes
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_clients_created_at ON clients(created_at DESC);
+      `);
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_clients_case_template_id ON clients(case_template_id) WHERE case_template_id IS NOT NULL;
+      `);
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_clients_email ON clients(email) WHERE email IS NOT NULL;
+      `);
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_clients_application_date ON clients(application_date) WHERE application_date IS NOT NULL;
+      `);
+      
+      // Users table indexes
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid);
+      `);
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+      `);
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_users_role ON users(role) WHERE role IS NOT NULL;
+      `);
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_users_active ON users(active) WHERE active = true;
+      `);
+      
+      // Case templates table indexes
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_templates_created_at ON case_templates(created_at DESC);
+      `);
+      
+      // Reminders table indexes
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_reminders_client_id ON reminders(client_id) WHERE client_id IS NOT NULL;
+      `);
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_reminders_reminder_date ON reminders(reminder_date);
+      `);
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_reminders_reminder_type ON reminders(reminder_type) WHERE reminder_type IS NOT NULL;
+      `);
+      
+      console.log('✅ Database indexes created successfully');
       console.log('✅ PostgreSQL database initialized and tables created');
     } catch (error: any) {
       console.error('❌ Error initializing PostgreSQL:', error.message);
