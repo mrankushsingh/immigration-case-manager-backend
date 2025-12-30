@@ -277,7 +277,7 @@ const start = async () => {
     
     if (process.env.DATABASE_URL) {
       console.log(`💾 Database: PostgreSQL (Railway)`);
-      console.log(`   DATABASE_URL: ${process.env.DATABASE_URL.substring(0, 20)}...`);
+      console.log(`   DATABASE_URL: [CONFIGURED]`);
       try {
         await db.getTemplates();
         console.log(`✅ Database connection verified`);

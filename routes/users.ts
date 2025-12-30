@@ -353,14 +353,23 @@ const usersRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ error: 'Invalid destination database URL format' });
       }
 
+      // Configure SSL with proper verification
+      // For production, we should verify SSL certificates
+      // For development/testing, we allow self-signed certificates
+      const sslConfig = process.env.NODE_ENV === 'production' 
+        ? { rejectUnauthorized: true } // Verify SSL in production
+        : { rejectUnauthorized: false }; // Allow self-signed in development
+
       const sourcePool = new Pool({
         connectionString: sourceUrl,
-        ssl: { rejectUnauthorized: false },
+        ssl: sslConfig,
+        connectionTimeoutMillis: 10000, // 10 second timeout
       });
 
       const destinationPool = new Pool({
         connectionString: destinationUrl,
-        ssl: { rejectUnauthorized: false },
+        ssl: sslConfig,
+        connectionTimeoutMillis: 10000, // 10 second timeout
       });
 
       // Test connections
