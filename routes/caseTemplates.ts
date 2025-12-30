@@ -1,6 +1,8 @@
 import { FastifyPluginAsync } from 'fastify';
 import { db } from '../utils/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
+import { cache } from '../utils/cache.js';
+
 const memoryDb = db;
 
 const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
@@ -38,6 +40,9 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
         administrative_silence_days: Number(administrativeSilenceDays) || 60,
       });
 
+      // Invalidate templates cache
+      cache.delete('templates:all');
+
       return reply.status(201).send(template);
     } catch (error: any) {
       return reply.status(500).send({ error: error.message || 'Failed to create template' });
@@ -46,7 +51,18 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get('/', async (request: AuthenticatedRequest, reply) => {
     try {
+      // Check cache first (templates change infrequently)
+      const cacheKey = 'templates:all';
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        return reply.send(cached);
+      }
+
       const templates = await memoryDb.getTemplates();
+      
+      // Cache for 5 minutes
+      cache.set(cacheKey, templates, 5 * 60 * 1000);
+      
       return reply.send(templates);
     } catch (error: any) {
       return reply.status(500).send({ error: error.message || 'Failed to fetch templates' });
@@ -77,6 +93,10 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
       
       const template = await memoryDb.updateTemplate(id, updateData);
       if (!template) return reply.status(404).send({ error: 'Template not found' });
+      
+      // Invalidate templates cache
+      cache.delete('templates:all');
+      cache.delete(`templates:${id}`);
       
       // Automatically update all clients using this template
       try {
@@ -165,6 +185,11 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
       const { id } = request.params as { id: string };
       const deleted = await memoryDb.deleteTemplate(id);
       if (!deleted) return reply.status(404).send({ error: 'Template not found' });
+      
+      // Invalidate templates cache
+      cache.delete('templates:all');
+      cache.delete(`templates:${id}`);
+      
       return reply.send({ message: 'Template deleted successfully' });
     } catch (error: any) {
       return reply.status(500).send({ error: error.message || 'Failed to delete template' });

@@ -1,6 +1,7 @@
 import { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import { db } from '../utils/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
+import { cache } from '../utils/cache.js';
 
 const memoryDb = db;
 
@@ -23,6 +24,13 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ error: 'Invalid year' });
       }
       
+      // Check cache first (analytics can be cached for 1 minute)
+      const cacheKey = `analytics:payments-summary:${targetMonth}:${targetYear}`;
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        return reply.send(cached);
+      }
+
       // Get all clients
       const clients = await memoryDb.getClients();
       
@@ -49,12 +57,17 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
       
-      return reply.send({
+      const result = {
         totalAmount: totalAmount,
         paymentCount: paymentCount,
         month: targetMonth + 1, // Return 1-indexed month
         year: targetYear,
-      });
+      };
+
+      // Cache for 1 minute
+      cache.set(cacheKey, result, 60 * 1000);
+      
+      return reply.send(result);
     } catch (error: any) {
       fastify.log.error('Error fetching payments summary:', error);
       return reply.status(500).send({ 
@@ -81,6 +94,13 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ error: 'Invalid year' });
       }
       
+      // Check cache first (monthly summary can be cached for 1 minute)
+      const cacheKey = `analytics:monthly-summary:${targetMonth}:${targetYear}`;
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        return reply.send(cached);
+      }
+
       // Get all clients
       const clients = await memoryDb.getClients();
       
@@ -176,7 +196,7 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
       // Total Revenue = Payment Received (which includes due payments + advance payments)
       const totalRevenue = totalPaymentReceived;
       
-      return reply.send({
+      const result = {
         totalClients: activeClientIds.size,
         totalPayments: totalPayments,
         totalPaymentReceived: totalPaymentReceived,
@@ -186,7 +206,12 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
         clientsWhoPaid: clientsWhoPaid.size,
         month: targetMonth + 1, // Return 1-indexed month
         year: targetYear,
-      });
+      };
+
+      // Cache for 1 minute
+      cache.set(cacheKey, result, 60 * 1000);
+      
+      return reply.send(result);
     } catch (error: any) {
       fastify.log.error('Error fetching monthly summary:', error);
       return reply.status(500).send({ 

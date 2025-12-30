@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { db } from '../utils/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
+import { cache } from '../utils/cache.js';
 import pg from 'pg';
 const { Pool } = pg;
 
@@ -9,7 +10,18 @@ const memoryDb = db;
 const usersRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/', async (request: AuthenticatedRequest, reply) => {
     try {
+      // Check cache first (users change infrequently)
+      const cacheKey = 'users:all';
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        return reply.send(cached);
+      }
+
       const users = await memoryDb.getUsers();
+      
+      // Cache for 2 minutes (users change more often than templates)
+      cache.set(cacheKey, users, 2 * 60 * 1000);
+      
       return reply.send(users);
     } catch (error: any) {
       return reply.status(500).send({ error: error.message || 'Failed to fetch users' });
