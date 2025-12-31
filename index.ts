@@ -45,6 +45,13 @@ await fastify.register(cors, {
   allowedHeaders: ['Content-Type', 'Authorization'],
 });
 
+// Get frontend origin for CSP frame-ancestors
+const frontendOrigin = corsOriginValue && typeof corsOriginValue === 'string' 
+  ? corsOriginValue 
+  : Array.isArray(corsOriginValue) && corsOriginValue.length > 0
+  ? corsOriginValue[0]
+  : null;
+
 // Register security headers
 await fastify.register(helmet, {
   contentSecurityPolicy: {
@@ -55,14 +62,15 @@ await fastify.register(helmet, {
       imgSrc: ["'self'", 'data:', 'https:'],
       connectSrc: ["'self'"],
       fontSrc: ["'self'"],
-      objectSrc: ["'none'"],
+      objectSrc: ["'self'"], // Allow PDFs to be embedded
       mediaSrc: ["'self'"],
-      frameSrc: ["'none'"],
+      frameSrc: ["'self'"], // Allow iframes for PDF viewing
+      frameAncestors: frontendOrigin ? ["'self'", frontendOrigin] : ["'self'"], // Allow frontend to embed PDFs
     },
   },
   crossOriginEmbedderPolicy: false, // Allow file uploads
   crossOriginResourcePolicy: { policy: 'cross-origin' }, // Allow file access
-  frameguard: false, // Disable X-Frame-Options (not needed for API, prevents frame-ancestors warnings)
+  frameguard: false, // Disable X-Frame-Options (we use CSP frame-ancestors instead)
 });
 
 fastify.log.info('✅ Security headers enabled via Helmet');
