@@ -230,9 +230,19 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ error: 'Number of months must be between 1 and 24' });
       }
       
+      // Check cache first (trend data can be cached for 1 minute)
+      const cacheKey = `analytics:monthly-trend:${numberOfMonths}`;
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        return reply.send(cached);
+      }
+      
       const now = new Date();
       const currentMonth = now.getMonth();
       const currentYear = now.getFullYear();
+      
+      // OPTIMIZATION: Load all clients ONCE instead of for each month
+      const clients = await memoryDb.getClients();
       
       const trendData = [];
       
@@ -241,9 +251,6 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
         const targetDate = new Date(currentYear, currentMonth - i, 1);
         const targetMonth = targetDate.getMonth();
         const targetYear = targetDate.getFullYear();
-        
-        // Get all clients
-        const clients = await memoryDb.getClients();
         
         // Initialize counters
         let totalPaymentReceived = 0; // Renamed for clarity
@@ -337,7 +344,12 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       
-      return reply.send({ data: trendData });
+      const result = { data: trendData };
+      
+      // Cache for 1 minute
+      cache.set(cacheKey, result, 60 * 1000);
+      
+      return reply.send(result);
     } catch (error: any) {
       fastify.log.error('Error fetching monthly trend:', error);
       return reply.status(500).send({ 
