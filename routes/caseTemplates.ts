@@ -51,7 +51,36 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get('/', async (request: AuthenticatedRequest, reply) => {
     try {
-      // Check cache first (templates change infrequently)
+      const { limit, offset } = request.query as { limit?: string; offset?: string };
+      
+      // If pagination parameters are provided, use paginated endpoint
+      if (limit !== undefined || offset !== undefined) {
+        const limitNum = limit ? Math.min(Math.max(parseInt(limit, 10), 1), 100) : 25; // Default 25, max 100
+        const offsetNum = offset ? Math.max(parseInt(offset, 10), 0) : 0;
+        
+        // Cache key includes pagination params
+        const cacheKey = `templates:paginated:${limitNum}:${offsetNum}`;
+        const cached = cache.get(cacheKey);
+        if (cached) {
+          return reply.send(cached);
+        }
+        
+        const result = await memoryDb.getTemplatesPaginated(limitNum, offsetNum);
+        const response = {
+          templates: result.templates,
+          total: result.total,
+          limit: limitNum,
+          offset: offsetNum,
+          hasMore: offsetNum + limitNum < result.total
+        };
+        
+        // Cache for 5 minutes
+        cache.set(cacheKey, response, 5 * 60 * 1000);
+        
+        return reply.send(response);
+      }
+      
+      // Default behavior: return all templates (for backward compatibility)
       const cacheKey = 'templates:all';
       const cached = cache.get(cacheKey);
       if (cached) {

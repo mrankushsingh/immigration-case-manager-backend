@@ -536,6 +536,30 @@ class DatabaseAdapter {
     );
   }
 
+  async getTemplatesPaginated(limit: number = 25, offset: number = 0): Promise<{ templates: CaseTemplate[]; total: number }> {
+    await this.ensureInitialized();
+    if (this.usePostgres && this.pool) {
+      const countResult = await this.pool.query('SELECT COUNT(*) as total FROM case_templates');
+      const total = parseInt(countResult.rows[0].total, 10);
+      
+      const result = await this.pool.query(
+        'SELECT * FROM case_templates ORDER BY created_at DESC LIMIT $1 OFFSET $2',
+        [limit, offset]
+      );
+      const templates = result.rows.map((row: any) => ({
+        ...row,
+        required_documents: this.safeParseJson(row.required_documents, []),
+      }));
+      return { templates, total };
+    }
+    const allTemplates = Array.from(this.templates.values()).sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+    const total = allTemplates.length;
+    const templates = allTemplates.slice(offset, offset + limit);
+    return { templates, total };
+  }
+
   async getTemplate(id: string): Promise<CaseTemplate | null> {
     await this.ensureInitialized();
     if (this.usePostgres && this.pool) {
@@ -682,6 +706,27 @@ class DatabaseAdapter {
     return Array.from(this.clients.values()).sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
+  }
+
+  async getClientsPaginated(limit: number = 25, offset: number = 0): Promise<{ clients: Client[]; total: number }> {
+    await this.ensureInitialized();
+    if (this.usePostgres && this.pool) {
+      const countResult = await this.pool.query('SELECT COUNT(*) as total FROM clients');
+      const total = parseInt(countResult.rows[0].total, 10);
+      
+      const result = await this.pool.query(
+        'SELECT * FROM clients ORDER BY created_at DESC LIMIT $1 OFFSET $2',
+        [limit, offset]
+      );
+      const clients = result.rows.map((row: any) => this.parseClientRow(row));
+      return { clients, total };
+    }
+    const allClients = Array.from(this.clients.values()).sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+    const total = allClients.length;
+    const clients = allClients.slice(offset, offset + limit);
+    return { clients, total };
   }
 
   async getClient(id: string): Promise<Client | null> {

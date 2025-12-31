@@ -198,6 +198,24 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
   // Get all clients
   fastify.get('/', async (request: AuthenticatedRequest, reply) => {
     try {
+      const { limit, offset } = request.query as { limit?: string; offset?: string };
+      
+      // If pagination parameters are provided, use paginated endpoint
+      if (limit !== undefined || offset !== undefined) {
+        const limitNum = limit ? Math.min(Math.max(parseInt(limit, 10), 1), 100) : 25; // Default 25, max 100
+        const offsetNum = offset ? Math.max(parseInt(offset, 10), 0) : 0;
+        
+        const result = await memoryDb.getClientsPaginated(limitNum, offsetNum);
+        return reply.send({
+          clients: result.clients,
+          total: result.total,
+          limit: limitNum,
+          offset: offsetNum,
+          hasMore: offsetNum + limitNum < result.total
+        });
+      }
+      
+      // Default behavior: return all clients (for backward compatibility)
       const clients = await memoryDb.getClients();
       return reply.send(clients);
     } catch (error: any) {
