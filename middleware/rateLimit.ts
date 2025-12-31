@@ -5,7 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 export const rateLimitConfig = {
   // General API endpoints (GET, POST, PUT, DELETE for most resources)
   general: {
-    max: 100, // 100 requests
+    max: 500, // 500 requests (increased from 100)
     timeWindow: 15 * 60 * 1000, // per 15 minutes
     errorResponseBuilder: (request: FastifyRequest, context: any) => {
       return {
@@ -18,7 +18,7 @@ export const rateLimitConfig = {
 
   // File upload endpoints (more restrictive)
   fileUpload: {
-    max: 20, // 20 requests
+    max: 100, // 100 requests (increased from 20)
     timeWindow: 15 * 60 * 1000, // per 15 minutes
     errorResponseBuilder: (request: FastifyRequest, context: any) => {
       return {
@@ -31,7 +31,7 @@ export const rateLimitConfig = {
 
   // Sensitive operations (user management, database copy, data export/import)
   sensitive: {
-    max: 10, // 10 requests
+    max: 50, // 50 requests (increased from 10)
     timeWindow: 15 * 60 * 1000, // per 15 minutes
     errorResponseBuilder: (request: FastifyRequest, context: any) => {
       return {
@@ -44,7 +44,7 @@ export const rateLimitConfig = {
 
   // Analytics endpoints (moderate limit)
   analytics: {
-    max: 50, // 50 requests
+    max: 200, // 200 requests (increased from 50)
     timeWindow: 15 * 60 * 1000, // per 15 minutes
     errorResponseBuilder: (request: FastifyRequest, context: any) => {
       return {

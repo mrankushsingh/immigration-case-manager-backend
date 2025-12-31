@@ -222,9 +222,9 @@ await fastify.register(async (fastify) => {
   // Apply authentication to all routes in this context
   fastify.addHook('onRequest', authenticateToken);
   
-  // Apply general rate limiting to all API routes (100 requests per 15 minutes)
+  // Apply general rate limiting to all API routes (500 requests per 15 minutes)
   await registerRateLimit(fastify, rateLimitConfig.general);
-  fastify.log.info('✅ Rate limiting enabled: 100 requests per 15 minutes (general)');
+  fastify.log.info('✅ Rate limiting enabled: 500 requests per 15 minutes (general)');
   
   // Register route plugins with specific rate limits
   // Case Templates - general limit
@@ -238,14 +238,14 @@ await fastify.register(async (fastify) => {
     await registerRateLimit(fastify, rateLimitConfig.sensitive);
     await fastify.register(usersRoutes);
   }, { prefix: '/users' });
-  fastify.log.info('✅ Rate limiting enabled: 10 requests per 15 minutes (users - sensitive)');
+  fastify.log.info('✅ Rate limiting enabled: 50 requests per 15 minutes (users - sensitive)');
   
   // Settings - sensitive operations
   await fastify.register(async (fastify) => {
     await registerRateLimit(fastify, rateLimitConfig.sensitive);
     await fastify.register(settingsRoutes);
   }, { prefix: '/settings' });
-  fastify.log.info('✅ Rate limiting enabled: 10 requests per 15 minutes (settings - sensitive)');
+  fastify.log.info('✅ Rate limiting enabled: 50 requests per 15 minutes (settings - sensitive)');
   
   // Reminders - general limit
   await fastify.register(remindersRoutes, { prefix: '/reminders' });
@@ -255,7 +255,7 @@ await fastify.register(async (fastify) => {
     await registerRateLimit(fastify, rateLimitConfig.analytics);
     await fastify.register(analyticsRoutes);
   }, { prefix: '/analytics' });
-  fastify.log.info('✅ Rate limiting enabled: 50 requests per 15 minutes (analytics)');
+  fastify.log.info('✅ Rate limiting enabled: 200 requests per 15 minutes (analytics)');
   
   // Protected API endpoint: Check if a file exists
   fastify.get('/files/check', async (request: AuthenticatedRequest, reply) => {
