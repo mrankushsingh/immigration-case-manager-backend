@@ -62,6 +62,7 @@ await fastify.register(helmet, {
   },
   crossOriginEmbedderPolicy: false, // Allow file uploads
   crossOriginResourcePolicy: { policy: 'cross-origin' }, // Allow file access
+  frameguard: false, // Disable X-Frame-Options (not needed for API, prevents frame-ancestors warnings)
 });
 
 fastify.log.info('✅ Security headers enabled via Helmet');
