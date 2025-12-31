@@ -528,9 +528,7 @@ class DatabaseAdapter {
       const result = await this.pool.query('SELECT * FROM case_templates ORDER BY created_at DESC');
       return result.rows.map((row: any) => ({
         ...row,
-        required_documents: typeof row.required_documents === 'string' 
-          ? JSON.parse(row.required_documents) 
-          : row.required_documents,
+        required_documents: this.safeParseJson(row.required_documents, []),
       }));
     }
     return Array.from(this.templates.values()).sort(
@@ -546,9 +544,7 @@ class DatabaseAdapter {
       const row = result.rows[0];
       return {
         ...row,
-        required_documents: typeof row.required_documents === 'string' 
-          ? JSON.parse(row.required_documents) 
-          : row.required_documents,
+        required_documents: this.safeParseJson(row.required_documents, []),
       };
     }
     return this.templates.get(id) || null;
@@ -698,41 +694,46 @@ class DatabaseAdapter {
     return this.clients.get(id) || null;
   }
 
+  /**
+   * Optimized JSON parsing helper - only parses if string, returns object as-is
+   * This avoids unnecessary parsing when PostgreSQL returns JSONB as objects
+   */
+  private safeParseJson<T>(value: any, defaultValue: T): T {
+    if (value === null || value === undefined) {
+      return defaultValue;
+    }
+    // If already an object/array, return as-is (PostgreSQL JSONB returns objects)
+    if (typeof value === 'object' && !Array.isArray(value) || Array.isArray(value)) {
+      return value as T;
+    }
+    // Only parse if it's a string
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value) as T;
+      } catch {
+        return defaultValue;
+      }
+    }
+    return defaultValue;
+  }
+
   private parseClientRow(row: any): Client {
     return {
       ...row,
-      required_documents: typeof row.required_documents === 'string' 
-        ? JSON.parse(row.required_documents) 
-        : row.required_documents,
-      payment: typeof row.payment === 'string' 
-        ? JSON.parse(row.payment) 
-        : row.payment,
-      notifications: typeof row.notifications === 'string' 
-        ? JSON.parse(row.notifications) 
-        : row.notifications,
-      additional_documents: typeof row.additional_documents === 'string' 
-        ? JSON.parse(row.additional_documents) 
-        : row.additional_documents,
-      requested_documents: typeof row.requested_documents === 'string' 
-        ? JSON.parse(row.requested_documents) 
-        : (row.requested_documents || []),
+      required_documents: this.safeParseJson(row.required_documents, []),
+      payment: this.safeParseJson(row.payment, {}),
+      notifications: this.safeParseJson(row.notifications, []),
+      additional_documents: this.safeParseJson(row.additional_documents, []),
+      requested_documents: this.safeParseJson(row.requested_documents, []),
       requested_documents_reminder_duration_days: row.requested_documents_reminder_duration_days || 10,
       requested_documents_reminder_interval_days: row.requested_documents_reminder_interval_days || 3,
       requested_documents_last_reminder_date: row.requested_documents_last_reminder_date 
         ? row.requested_documents_last_reminder_date.toISOString() 
         : undefined,
-      aportar_documentacion: typeof row.aportar_documentacion === 'string' 
-        ? JSON.parse(row.aportar_documentacion) 
-        : (row.aportar_documentacion || []),
-      requerimiento: typeof row.requerimiento === 'string' 
-        ? JSON.parse(row.requerimiento) 
-        : (row.requerimiento || []),
-      resolucion: typeof row.resolucion === 'string' 
-        ? JSON.parse(row.resolucion) 
-        : (row.resolucion || []),
-      justificante_presentacion: typeof row.justificante_presentacion === 'string' 
-        ? JSON.parse(row.justificante_presentacion) 
-        : (row.justificante_presentacion || []),
+      aportar_documentacion: this.safeParseJson(row.aportar_documentacion, []),
+      requerimiento: this.safeParseJson(row.requerimiento, []),
+      resolucion: this.safeParseJson(row.resolucion, []),
+      justificante_presentacion: this.safeParseJson(row.justificante_presentacion, []),
       application_date: row.application_date ? row.application_date.toISOString() : undefined,
       custom_reminder_date: row.custom_reminder_date ? row.custom_reminder_date.toISOString() : undefined,
       created_at: row.created_at.toISOString(),
