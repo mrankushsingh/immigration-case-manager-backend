@@ -181,29 +181,18 @@ fastify.get('/health', async (request, reply) => {
       dbStatus.connected = true;
     }
 
-    // Check Redis status
-    const redisStatus = {
-      configured: !!process.env.REDIS_URL,
-      connected: cache.isRedisAvailable(),
-      type: cache.isRedisAvailable() ? 'redis' : 'memory',
+    // Get cache status (in-memory only)
+    const stats = await cache.getStats();
+    const cacheStatus = {
+      type: 'memory',
+      size: stats.size,
     };
-
-    // Try to get cache stats to verify Redis connection
-    if (redisStatus.configured) {
-      try {
-        const stats = await cache.getStats();
-        redisStatus.type = stats.type;
-        redisStatus.connected = stats.type === 'redis';
-      } catch (error) {
-        redisStatus.connected = false;
-      }
-    }
 
     return reply.send({ 
       status: 'ok', 
       timestamp: new Date().toISOString(),
       database: dbStatus,
-      cache: redisStatus
+      cache: cacheStatus
     });
   } catch (error) {
     return reply.status(500).send({ 

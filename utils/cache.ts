@@ -1,158 +1,25 @@
 /**
- * Redis-based cache utility with in-memory fallback
- * Uses Redis if available, falls back to in-memory cache if Redis is unavailable
+ * In-memory cache utility
+ * Simple, fast caching for API responses
  */
-
-import Redis from 'ioredis';
 
 interface CacheEntry<T> {
   data: T;
   expires: number;
 }
 
-class RedisCache {
-  private redis: Redis | null = null;
+class MemoryCache {
   private memoryCache: Map<string, CacheEntry<any>> = new Map();
   private defaultTTL: number = 5 * 60 * 1000; // 5 minutes default
-  private useRedis: boolean = false;
-  private connectionAttempted: boolean = false;
 
   constructor() {
-    this.initRedis();
-  }
-
-  /**
-   * Initialize Redis connection
-   */
-  private async initRedis() {
-    if (this.connectionAttempted) return;
-    this.connectionAttempted = true;
-
-    const redisUrl = process.env.REDIS_URL;
-    
-    if (!redisUrl) {
-      console.log('⚠️  REDIS_URL not set, using in-memory cache');
-      return;
-    }
-
-    try {
-      console.log('🔄 Attempting to connect to Redis...');
-      console.log('📍 Redis URL:', redisUrl.replace(/:[^:@]+@/, ':****@')); // Hide password in logs
-      
-      this.redis = new Redis(redisUrl, {
-        maxRetriesPerRequest: 3,
-        retryStrategy: (times) => {
-          const delay = Math.min(times * 50, 2000);
-          return delay;
-        },
-        reconnectOnError: (err) => {
-          const targetError = 'READONLY';
-          if (err.message.includes(targetError)) {
-            return true; // Reconnect on READONLY error
-          }
-          return false;
-        },
-        enableOfflineQueue: true, // Allow queuing commands while connecting
-        connectTimeout: 10000, // 10 second connection timeout
-        lazyConnect: false, // Connect immediately
-        family: 4, // Use IPv4 (Railway internal network)
-      });
-
-      // Wait for connection to be ready before testing
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Connection timeout after 10 seconds'));
-        }, 10000);
-
-        this.redis!.once('ready', () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-
-        this.redis!.once('error', (err) => {
-          clearTimeout(timeout);
-          reject(err);
-        });
-      });
-
-      // Test connection with ping
-      await this.redis.ping();
-      this.useRedis = true;
-      console.log('✅ Redis connected successfully');
-
-      // Handle connection errors
-      this.redis.on('error', (err) => {
-        console.error('❌ Redis error:', err.message);
-        // Fall back to memory cache on error
-        if (this.useRedis) {
-          console.log('⚠️  Falling back to in-memory cache');
-          this.useRedis = false;
-        }
-      });
-
-      // Handle reconnection
-      this.redis.on('connect', () => {
-        if (!this.useRedis) {
-          console.log('✅ Redis reconnected, switching back to Redis');
-          this.useRedis = true;
-        }
-      });
-
-    } catch (error: any) {
-      console.error('❌ Failed to connect to Redis:', error.message);
-      console.error('❌ Error details:', error);
-      if (error.code) {
-        console.error('❌ Error code:', error.code);
-      }
-      if (error.errno) {
-        console.error('❌ Error number:', error.errno);
-      }
-      console.log('⚠️  Using in-memory cache as fallback');
-      this.useRedis = false;
-      if (this.redis) {
-        try {
-          await this.redis.quit();
-        } catch (e) {
-          // Ignore quit errors
-        }
-      }
-      this.redis = null;
-    }
+    console.log('✅ Using in-memory cache');
   }
 
   /**
    * Get cached value
    */
   async get<T>(key: string): Promise<T | null> {
-    if (this.useRedis && this.redis) {
-      try {
-        const value = await this.redis.get(key);
-        if (!value) return null;
-        
-        const entry: CacheEntry<T> = JSON.parse(value);
-        
-        // Check expiration
-        if (entry.expires < Date.now()) {
-          await this.redis.del(key);
-          return null;
-        }
-        
-        return entry.data as T;
-      } catch (error: any) {
-        console.error('Redis get error:', error.message);
-        // Fall back to memory cache
-        this.useRedis = false;
-        return this.getFromMemory<T>(key);
-      }
-    }
-    
-    return this.getFromMemory<T>(key);
-  }
-
-  /**
-   * Get from memory cache
-   */
-  private getFromMemory<T>(key: string): T | null {
     const entry = this.memoryCache.get(key);
     if (!entry) return null;
     
@@ -170,21 +37,6 @@ class RedisCache {
   async set<T>(key: string, data: T, ttl?: number): Promise<void> {
     const expires = Date.now() + (ttl || this.defaultTTL);
     const entry: CacheEntry<T> = { data, expires };
-
-    if (this.useRedis && this.redis) {
-      try {
-        // Convert TTL to seconds for Redis
-        const ttlSeconds = Math.ceil((ttl || this.defaultTTL) / 1000);
-        await this.redis.setex(key, ttlSeconds, JSON.stringify(entry));
-        return;
-      } catch (error: any) {
-        console.error('Redis set error:', error.message);
-        // Fall back to memory cache
-        this.useRedis = false;
-      }
-    }
-    
-    // Use memory cache
     this.memoryCache.set(key, entry);
   }
 
@@ -192,17 +44,6 @@ class RedisCache {
    * Delete cached value
    */
   async delete(key: string): Promise<void> {
-    if (this.useRedis && this.redis) {
-      try {
-        await this.redis.del(key);
-        return;
-      } catch (error: any) {
-        console.error('Redis delete error:', error.message);
-        // Fall back to memory cache
-        this.useRedis = false;
-      }
-    }
-    
     this.memoryCache.delete(key);
   }
 
@@ -210,22 +51,11 @@ class RedisCache {
    * Clear all cache
    */
   async clear(): Promise<void> {
-    if (this.useRedis && this.redis) {
-      try {
-        await this.redis.flushdb();
-        return;
-      } catch (error: any) {
-        console.error('Redis clear error:', error.message);
-        // Fall back to memory cache
-        this.useRedis = false;
-      }
-    }
-    
     this.memoryCache.clear();
   }
 
   /**
-   * Clear expired entries (memory cache only, Redis handles expiration automatically)
+   * Clear expired entries
    */
   cleanup(): void {
     const now = Date.now();
@@ -240,21 +70,6 @@ class RedisCache {
    * Get cache statistics
    */
   async getStats() {
-    if (this.useRedis && this.redis) {
-      try {
-        const info = await this.redis.info('keyspace');
-        const keys = await this.redis.keys('*');
-        return {
-          type: 'redis',
-          size: keys.length,
-          keys: keys.slice(0, 100), // Limit to first 100 keys
-          info: info,
-        };
-      } catch (error: any) {
-        console.error('Redis stats error:', error.message);
-      }
-    }
-    
     return {
       type: 'memory',
       size: this.memoryCache.size,
@@ -263,42 +78,19 @@ class RedisCache {
   }
 
   /**
-   * Check if Redis is available
+   * Check if cache is available (always true for memory cache)
    */
   isRedisAvailable(): boolean {
-    return this.useRedis && this.redis !== null;
-  }
-
-  /**
-   * Gracefully close Redis connection
-   */
-  async disconnect(): Promise<void> {
-    if (this.redis) {
-      await this.redis.quit();
-      this.redis = null;
-      this.useRedis = false;
-    }
+    return false; // No Redis, always false
   }
 }
 
 // Singleton instance
-export const cache = new RedisCache();
+export const cache = new MemoryCache();
 
-// Cleanup expired entries every 5 minutes (memory cache only)
+// Cleanup expired entries every 5 minutes
 if (typeof setInterval !== 'undefined') {
   setInterval(() => {
     cache.cleanup();
   }, 5 * 60 * 1000);
-}
-
-// Graceful shutdown
-if (typeof process !== 'undefined') {
-  process.on('SIGTERM', async () => {
-    await cache.disconnect();
-  });
-  
-  process.on('SIGINT', async () => {
-    await cache.disconnect();
-    process.exit(0);
-  });
 }
