@@ -52,19 +52,31 @@ class RedisCache {
           }
           return false;
         },
-        enableOfflineQueue: false, // Don't queue commands when disconnected
+        enableOfflineQueue: true, // Allow queuing commands while connecting
         connectTimeout: 10000, // 10 second connection timeout
         lazyConnect: false, // Connect immediately
         family: 4, // Use IPv4 (Railway internal network)
       });
 
-      // Test connection with timeout
-      const pingPromise = this.redis.ping();
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Connection timeout after 10 seconds')), 10000)
-      );
-      
-      await Promise.race([pingPromise, timeoutPromise]);
+      // Wait for connection to be ready before testing
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Connection timeout after 10 seconds'));
+        }, 10000);
+
+        this.redis!.once('ready', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+
+        this.redis!.once('error', (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
+      });
+
+      // Test connection with ping
+      await this.redis.ping();
       this.useRedis = true;
       console.log('✅ Redis connected successfully');
 
