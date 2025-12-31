@@ -9,6 +9,7 @@ import settingsRoutes from './routes/settings.js';
 import remindersRoutes from './routes/reminders.js';
 import analyticsRoutes from './routes/analytics.js';
 import { db } from './utils/database.js';
+import { cache } from './utils/cache.js';
 import { isUsingBucketStorage, getFileUrl, fileExists } from './utils/storage.js';
 import { initializeFirebaseAdmin } from './utils/firebase.js';
 import { authenticateToken, AuthenticatedRequest } from './middleware/auth.js';
@@ -180,10 +181,29 @@ fastify.get('/health', async (request, reply) => {
       dbStatus.connected = true;
     }
 
+    // Check Redis status
+    const redisStatus = {
+      configured: !!process.env.REDIS_URL,
+      connected: cache.isRedisAvailable(),
+      type: cache.isRedisAvailable() ? 'redis' : 'memory',
+    };
+
+    // Try to get cache stats to verify Redis connection
+    if (redisStatus.configured) {
+      try {
+        const stats = await cache.getStats();
+        redisStatus.type = stats.type;
+        redisStatus.connected = stats.type === 'redis';
+      } catch (error) {
+        redisStatus.connected = false;
+      }
+    }
+
     return reply.send({ 
       status: 'ok', 
       timestamp: new Date().toISOString(),
-      database: dbStatus
+      database: dbStatus,
+      cache: redisStatus
     });
   } catch (error) {
     return reply.status(500).send({ 
