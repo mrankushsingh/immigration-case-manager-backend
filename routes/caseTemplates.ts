@@ -41,7 +41,7 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       // Invalidate templates cache
-      cache.delete('templates:all');
+      await cache.delete('templates:all');
 
       return reply.status(201).send(template);
     } catch (error: any) {
@@ -51,38 +51,47 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get('/', async (request: AuthenticatedRequest, reply) => {
     try {
-      const { limit, offset } = request.query as { limit?: string; offset?: string };
+      const { limit, offset, search } = request.query as { limit?: string; offset?: string; search?: string };
       
       // If pagination parameters are provided, use paginated endpoint
-      if (limit !== undefined || offset !== undefined) {
+      if (limit !== undefined || offset !== undefined || search !== undefined) {
         const limitNum = limit ? Math.min(Math.max(parseInt(limit, 10), 1), 100) : 25; // Default 25, max 100
         const offsetNum = offset ? Math.max(parseInt(offset, 10), 0) : 0;
+        const searchTerm = search ? String(search).trim() : undefined;
         
-        // Cache key includes pagination params
-        const cacheKey = `templates:paginated:${limitNum}:${offsetNum}`;
-        const cached = cache.get(cacheKey);
-        if (cached) {
-          return reply.send(cached);
+        // Cache key includes pagination and search params (don't cache search results)
+        const cacheKey = searchTerm 
+          ? null // Don't cache search results
+          : `templates:paginated:${limitNum}:${offsetNum}`;
+        
+        if (cacheKey) {
+          const cached = await cache.get(cacheKey);
+          if (cached) {
+            return reply.send(cached);
+          }
         }
         
-        const result = await memoryDb.getTemplatesPaginated(limitNum, offsetNum);
+        const result = await memoryDb.getTemplatesPaginated(limitNum, offsetNum, searchTerm);
         const response = {
           templates: result.templates,
           total: result.total,
           limit: limitNum,
           offset: offsetNum,
-          hasMore: offsetNum + limitNum < result.total
+          hasMore: offsetNum + limitNum < result.total,
+          search: searchTerm || undefined
         };
         
-        // Cache for 5 minutes
-        cache.set(cacheKey, response, 5 * 60 * 1000);
+        // Cache for 5 minutes (only if not a search query)
+        if (cacheKey) {
+          await cache.set(cacheKey, response, 5 * 60 * 1000);
+        }
         
         return reply.send(response);
       }
       
       // Default behavior: return all templates (for backward compatibility)
       const cacheKey = 'templates:all';
-      const cached = cache.get(cacheKey);
+      const cached = await cache.get(cacheKey);
       if (cached) {
         return reply.send(cached);
       }
@@ -90,7 +99,7 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
       const templates = await memoryDb.getTemplates();
       
       // Cache for 5 minutes
-      cache.set(cacheKey, templates, 5 * 60 * 1000);
+      await cache.set(cacheKey, templates, 5 * 60 * 1000);
       
       return reply.send(templates);
     } catch (error: any) {
@@ -124,8 +133,8 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
       if (!template) return reply.status(404).send({ error: 'Template not found' });
       
       // Invalidate templates cache
-      cache.delete('templates:all');
-      cache.delete(`templates:${id}`);
+      await cache.delete('templates:all');
+      await cache.delete(`templates:${id}`);
       
       // Automatically update all clients using this template
       try {
@@ -216,8 +225,8 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
       if (!deleted) return reply.status(404).send({ error: 'Template not found' });
       
       // Invalidate templates cache
-      cache.delete('templates:all');
-      cache.delete(`templates:${id}`);
+      await cache.delete('templates:all');
+      await cache.delete(`templates:${id}`);
       
       return reply.send({ message: 'Template deleted successfully' });
     } catch (error: any) {

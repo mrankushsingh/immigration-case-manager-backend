@@ -536,25 +536,53 @@ class DatabaseAdapter {
     );
   }
 
-  async getTemplatesPaginated(limit: number = 25, offset: number = 0): Promise<{ templates: CaseTemplate[]; total: number }> {
+  async getTemplatesPaginated(limit: number = 25, offset: number = 0, search?: string): Promise<{ templates: CaseTemplate[]; total: number }> {
     await this.ensureInitialized();
     if (this.usePostgres && this.pool) {
-      const countResult = await this.pool.query('SELECT COUNT(*) as total FROM case_templates');
+      let countQuery = 'SELECT COUNT(*) as total FROM case_templates';
+      let dataQuery = 'SELECT * FROM case_templates';
+      const queryParams: any[] = [];
+      let paramCount = 1;
+      
+      if (search && search.trim()) {
+        const searchTerm = `%${search.trim().toLowerCase()}%`;
+        const whereClause = `WHERE 
+          LOWER(name) LIKE $${paramCount} OR
+          LOWER(description) LIKE $${paramCount}`;
+        countQuery += ` ${whereClause}`;
+        dataQuery += ` ${whereClause}`;
+        queryParams.push(searchTerm);
+        paramCount++;
+      }
+      
+      dataQuery += ` ORDER BY created_at DESC LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
+      queryParams.push(limit, offset);
+      
+      const countResult = await this.pool.query(countQuery, queryParams.slice(0, paramCount - 1));
       const total = parseInt(countResult.rows[0].total, 10);
       
-      const result = await this.pool.query(
-        'SELECT * FROM case_templates ORDER BY created_at DESC LIMIT $1 OFFSET $2',
-        [limit, offset]
-      );
+      const result = await this.pool.query(dataQuery, queryParams);
       const templates = result.rows.map((row: any) => ({
         ...row,
         required_documents: this.safeParseJson(row.required_documents, []),
       }));
       return { templates, total };
     }
-    const allTemplates = Array.from(this.templates.values()).sort(
+    let allTemplates = Array.from(this.templates.values()).sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
+    
+    // Apply search filter for file-based storage
+    if (search && search.trim()) {
+      const query = search.trim().toLowerCase();
+      allTemplates = allTemplates.filter((template) => {
+        const name = (template.name || '').toLowerCase();
+        const description = (template.description || '').toLowerCase();
+        
+        return name.includes(query) || description.includes(query);
+      });
+    }
+    
     const total = allTemplates.length;
     const templates = allTemplates.slice(offset, offset + limit);
     return { templates, total };
@@ -708,22 +736,62 @@ class DatabaseAdapter {
     );
   }
 
-  async getClientsPaginated(limit: number = 25, offset: number = 0): Promise<{ clients: Client[]; total: number }> {
+  async getClientsPaginated(limit: number = 25, offset: number = 0, search?: string): Promise<{ clients: Client[]; total: number }> {
     await this.ensureInitialized();
     if (this.usePostgres && this.pool) {
-      const countResult = await this.pool.query('SELECT COUNT(*) as total FROM clients');
+      let countQuery = 'SELECT COUNT(*) as total FROM clients';
+      let dataQuery = 'SELECT * FROM clients';
+      const queryParams: any[] = [];
+      let paramCount = 1;
+      
+      if (search && search.trim()) {
+        const searchTerm = `%${search.trim().toLowerCase()}%`;
+        const whereClause = `WHERE 
+          LOWER(first_name || ' ' || last_name) LIKE $${paramCount} OR
+          LOWER(email) LIKE $${paramCount} OR
+          LOWER(phone) LIKE $${paramCount} OR
+          LOWER(case_type) LIKE $${paramCount} OR
+          LOWER(parent_name) LIKE $${paramCount}`;
+        countQuery += ` ${whereClause}`;
+        dataQuery += ` ${whereClause}`;
+        queryParams.push(searchTerm);
+        paramCount++;
+      }
+      
+      dataQuery += ` ORDER BY created_at DESC LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
+      queryParams.push(limit, offset);
+      
+      const countResult = await this.pool.query(countQuery, queryParams.slice(0, paramCount - 1));
       const total = parseInt(countResult.rows[0].total, 10);
       
-      const result = await this.pool.query(
-        'SELECT * FROM clients ORDER BY created_at DESC LIMIT $1 OFFSET $2',
-        [limit, offset]
-      );
+      const result = await this.pool.query(dataQuery, queryParams);
       const clients = result.rows.map((row: any) => this.parseClientRow(row));
       return { clients, total };
     }
-    const allClients = Array.from(this.clients.values()).sort(
+    let allClients = Array.from(this.clients.values()).sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
+    
+    // Apply search filter for file-based storage
+    if (search && search.trim()) {
+      const query = search.trim().toLowerCase();
+      allClients = allClients.filter((client) => {
+        const fullName = `${client.first_name} ${client.last_name}`.toLowerCase();
+        const email = (client.email || '').toLowerCase();
+        const phone = (client.phone || '').toLowerCase();
+        const caseType = (client.case_type || '').toLowerCase();
+        const parentName = (client.parent_name || '').toLowerCase();
+        
+        return (
+          fullName.includes(query) ||
+          email.includes(query) ||
+          phone.includes(query) ||
+          caseType.includes(query) ||
+          parentName.includes(query)
+        );
+      });
+    }
+    
     const total = allClients.length;
     const clients = allClients.slice(offset, offset + limit);
     return { clients, total };

@@ -26,7 +26,7 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
       
       // Check cache first (analytics can be cached for 1 minute)
       const cacheKey = `analytics:payments-summary:${targetMonth}:${targetYear}`;
-      const cached = cache.get(cacheKey);
+      const cached = await cache.get(cacheKey);
       if (cached) {
         return reply.send(cached);
       }
@@ -65,7 +65,7 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
       };
 
       // Cache for 1 minute
-      cache.set(cacheKey, result, 60 * 1000);
+      await cache.set(cacheKey, result, 60 * 1000);
       
       return reply.send(result);
     } catch (error: any) {
@@ -96,7 +96,7 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
       
       // Check cache first (monthly summary can be cached for 1 minute)
       const cacheKey = `analytics:monthly-summary:${targetMonth}:${targetYear}`;
-      const cached = cache.get(cacheKey);
+      const cached = await cache.get(cacheKey);
       if (cached) {
         return reply.send(cached);
       }
@@ -209,7 +209,7 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
       };
 
       // Cache for 1 minute
-      cache.set(cacheKey, result, 60 * 1000);
+      await cache.set(cacheKey, result, 60 * 1000);
       
       return reply.send(result);
     } catch (error: any) {
@@ -232,7 +232,7 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
       
       // Check cache first (trend data can be cached for 1 minute)
       const cacheKey = `analytics:monthly-trend:${numberOfMonths}`;
-      const cached = cache.get(cacheKey);
+      const cached = await cache.get(cacheKey);
       if (cached) {
         return reply.send(cached);
       }
@@ -347,7 +347,7 @@ const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
       const result = { data: trendData };
       
       // Cache for 1 minute
-      cache.set(cacheKey, result, 60 * 1000);
+      await cache.set(cacheKey, result, 60 * 1000);
       
       return reply.send(result);
     } catch (error: any) {

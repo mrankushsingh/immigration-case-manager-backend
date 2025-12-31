@@ -10,7 +10,7 @@ const usersRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       // Check cache first (users change infrequently)
       const cacheKey = 'users:all';
-      const cached = cache.get(cacheKey);
+      const cached = await cache.get(cacheKey);
       if (cached) {
         return reply.send(cached);
       }
@@ -18,7 +18,7 @@ const usersRoutes: FastifyPluginAsync = async (fastify) => {
       const users = await memoryDb.getUsers();
       
       // Cache for 2 minutes (users change more often than templates)
-      cache.set(cacheKey, users, 2 * 60 * 1000);
+      await cache.set(cacheKey, users, 2 * 60 * 1000);
       
       return reply.send(users);
     } catch (error: any) {
