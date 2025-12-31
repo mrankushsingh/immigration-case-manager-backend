@@ -36,6 +36,9 @@ class RedisCache {
     }
 
     try {
+      console.log('🔄 Attempting to connect to Redis...');
+      console.log('📍 Redis URL:', redisUrl.replace(/:[^:@]+@/, ':****@')); // Hide password in logs
+      
       this.redis = new Redis(redisUrl, {
         maxRetriesPerRequest: 3,
         retryStrategy: (times) => {
@@ -50,10 +53,18 @@ class RedisCache {
           return false;
         },
         enableOfflineQueue: false, // Don't queue commands when disconnected
+        connectTimeout: 10000, // 10 second connection timeout
+        lazyConnect: false, // Connect immediately
+        family: 4, // Use IPv4 (Railway internal network)
       });
 
-      // Test connection
-      await this.redis.ping();
+      // Test connection with timeout
+      const pingPromise = this.redis.ping();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Connection timeout after 10 seconds')), 10000)
+      );
+      
+      await Promise.race([pingPromise, timeoutPromise]);
       this.useRedis = true;
       console.log('✅ Redis connected successfully');
 
@@ -77,8 +88,22 @@ class RedisCache {
 
     } catch (error: any) {
       console.error('❌ Failed to connect to Redis:', error.message);
+      console.error('❌ Error details:', error);
+      if (error.code) {
+        console.error('❌ Error code:', error.code);
+      }
+      if (error.errno) {
+        console.error('❌ Error number:', error.errno);
+      }
       console.log('⚠️  Using in-memory cache as fallback');
       this.useRedis = false;
+      if (this.redis) {
+        try {
+          await this.redis.quit();
+        } catch (e) {
+          // Ignore quit errors
+        }
+      }
       this.redis = null;
     }
   }
