@@ -1,0 +1,43 @@
+{
+  "name": "immigration-case-manager-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Backend API server for Immigration Case Manager",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "type-check": "tsc --noEmit"
+  },
+  "keywords": [
+    "immigration",
+    "case-management",
+    "api",
+    "fastify"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.490.0",
+    "@aws-sdk/s3-request-presigner": "^3.490.0",
+    "@fastify/cors": "^11.2.0",
+    "@fastify/helmet": "^13.0.2",
+    "@fastify/multipart": "^9.3.0",
+    "@fastify/rate-limit": "^10.3.0",
+    "@fastify/static": "^9.0.0",
+    "@types/bcrypt": "^6.0.0",
+    "bcrypt": "^6.0.0",
+    "fastify": "^5.6.2",
+    "firebase-admin": "^12.0.0",
+    "pg": "^8.11.3",
+    "validator": "^13.15.26"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.27",
+    "@types/pg": "^8.10.9",
+    "@types/validator": "^13.15.10",
+    "tsx": "^3.12.7",
+    "typescript": "^5.1.6"
+  }
+}
