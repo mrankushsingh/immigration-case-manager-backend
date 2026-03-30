@@ -23,6 +23,9 @@ const ALLOWED_MIME_TYPES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 ];
 
+/** Default @fastify/multipart file limit is 1MB unless passed here — large PDFs fail without this. */
+const MULTIPART_PARTS_LIMITS = { fileSize: 50 * 1024 * 1024 };
+
 // Helper function to get user name from request
 async function getUserName(request: AuthenticatedRequest): Promise<string> {
   try {
@@ -46,7 +49,7 @@ async function processFile(
       return null;
     }
 
-    const parts = request.parts({ limits: { fileSize: 50 * 1024 * 1024 } });
+    const parts = request.parts({ limits: MULTIPART_PARTS_LIMITS });
     for await (const part of parts) {
       if (part.type === 'file') {
         const file = part as any;
@@ -105,7 +108,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
   // Register multipart plugin with configuration that won't interfere with GET/DELETE requests
   // The plugin only processes requests with multipart content-type, so GET requests are unaffected
   await fastify.register(multipart, {
-    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+    limits: MULTIPART_PARTS_LIMITS,
     attachFieldsToBody: false, // Don't auto-attach to body
     throwFileSizeLimit: false, // Don't throw on size limit, return error instead
   });
@@ -400,8 +403,8 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       let fileData: { buffer: Buffer; filename: string; mimetype: string; size: number } | null = null;
 
       if (request.isMultipart()) {
-        // Handle multipart form data
-        const parts = request.parts();
+        // Handle multipart form data (must pass 50MB limits — default per-part limit is ~1MB)
+        const parts = request.parts({ limits: MULTIPART_PARTS_LIMITS });
         for await (const part of parts) {
           if (part.type === 'file') {
             const file = part as any;
@@ -427,9 +430,12 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
         body = request.body as any;
       }
 
-      const { name, description, reminder_days, all_documents_section } = body;
+      const { name, description, reminder_days, all_documents_section, fileName: fileNameField } = body;
       const nameFromFile = fileData?.filename || '';
-      const resolvedName = (name && String(name).trim()) || nameFromFile;
+      const resolvedName =
+        (name && String(name).trim()) ||
+        (fileNameField && String(fileNameField).trim()) ||
+        nameFromFile;
       if (!resolvedName) {
         return reply.status(400).send({ error: 'Document name is required' });
       }
@@ -870,7 +876,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       let fileData: { buffer: Buffer; filename: string; mimetype: string; size: number } | null = null;
 
       if (request.isMultipart()) {
-        const parts = request.parts();
+        const parts = request.parts({ limits: MULTIPART_PARTS_LIMITS });
         for await (const part of parts) {
           if (part.type === 'file') {
             const file = part as any;
