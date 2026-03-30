@@ -418,10 +418,15 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
         body = request.body as any;
       }
 
-      const { name, description, reminder_days } = body;
+      const { name, description, reminder_days, all_documents_section } = body;
       if (!name || !name.trim()) {
         return reply.status(400).send({ error: 'Document name is required' });
       }
+
+      const allDocumentsSection =
+        all_documents_section === 'true' ||
+        all_documents_section === true ||
+        all_documents_section === '1';
 
       const reminderDays = reminder_days ? parseInt(reminder_days) : 10;
       const reminderDate = new Date();
@@ -446,6 +451,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
         const newDocument = {
           id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           name: name.trim(),
+          ...(allDocumentsSection ? { allDocumentsSection: true } : {}),
           description: description ? description.trim() : undefined,
           fileUrl: fileUrl,
           fileName: fileData.filename,
@@ -467,6 +473,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
         const newDocument = {
           id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           name: name.trim(),
+          ...(allDocumentsSection ? { allDocumentsSection: true } : {}),
           description: description ? description.trim() : undefined,
           reminder_days: reminderDays,
           reminder_date: reminderDate.toISOString(),
