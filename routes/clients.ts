@@ -36,7 +36,7 @@ async function getUserName(request: AuthenticatedRequest): Promise<string> {
   return 'Unknown User';
 }
 
-// Helper function to process multipart file
+// Helper function to process multipart file (uses parts() like POST /additional-documents — more reliable than request.file() with mixed field order)
 async function processFile(
   request: FastifyRequest,
   fieldName: string = 'file'
@@ -46,25 +46,31 @@ async function processFile(
       return null;
     }
 
-    const data = await request.file({ limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB limit
-    
-    if (!data) {
-      return null;
+    const parts = request.parts({ limits: { fileSize: 50 * 1024 * 1024 } });
+    for await (const part of parts) {
+      if (part.type === 'file') {
+        const file = part as any;
+        if (fieldName && file.fieldname && file.fieldname !== fieldName) {
+          try {
+            await file.toBuffer();
+          } catch {
+            /* consume stream */
+          }
+          continue;
+        }
+        if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+          throw new Error(`File type ${file.mimetype} is not allowed. Allowed types: PDF, images, Word, Excel`);
+        }
+        const buffer = await file.toBuffer();
+        return {
+          buffer,
+          filename: file.filename || 'unknown',
+          mimetype: file.mimetype,
+          size: buffer.length,
+        };
+      }
     }
-
-    // Validate file type
-    if (!ALLOWED_MIME_TYPES.includes(data.mimetype)) {
-      throw new Error(`File type ${data.mimetype} is not allowed. Allowed types: PDF, images, Word, Excel`);
-    }
-
-    const buffer = await data.toBuffer();
-    
-    return {
-      buffer,
-      filename: data.filename || 'unknown',
-      mimetype: data.mimetype,
-      size: buffer.length,
-    };
+    return null;
   } catch (error: any) {
     if (error.message && error.message.includes('File type')) {
       throw error;
@@ -422,7 +428,9 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const { name, description, reminder_days, all_documents_section } = body;
-      if (!name || !name.trim()) {
+      const nameFromFile = fileData?.filename || '';
+      const resolvedName = (name && String(name).trim()) || nameFromFile;
+      if (!resolvedName) {
         return reply.status(400).send({ error: 'Document name is required' });
       }
 
@@ -453,7 +461,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
 
         const newDocument = {
           id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          name: name.trim(),
+          name: resolvedName.trim(),
           ...(allDocumentsSection ? { allDocumentsSection: true } : {}),
           description: description ? description.trim() : undefined,
           fileUrl: fileUrl,
@@ -471,11 +479,11 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
           additional_documents: updatedAdditionalDocs,
         });
 
-        return reply.send(updated);
+        return reply.send({ ...updated, newAdditionalDocumentId: newDocument.id });
       } else {
         const newDocument = {
           id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          name: name.trim(),
+          name: resolvedName.trim(),
           ...(allDocumentsSection ? { allDocumentsSection: true } : {}),
           description: description ? description.trim() : undefined,
           reminder_days: reminderDays,
@@ -488,7 +496,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
           additional_documents: updatedAdditionalDocs,
         });
 
-        return reply.send(updated);
+        return reply.send({ ...updated, newAdditionalDocumentId: newDocument.id });
       }
     } catch (error: any) {
       if (error.message && error.message.includes('File type')) {
