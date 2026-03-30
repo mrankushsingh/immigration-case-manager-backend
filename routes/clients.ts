@@ -411,7 +411,10 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
             };
           } else {
             const field = part as any;
-            body[field.fieldname] = field.value;
+            const raw = field.value;
+            const str =
+              Buffer.isBuffer(raw) ? raw.toString('utf8') : raw != null && raw !== '' ? String(raw) : '';
+            body[field.fieldname] = str;
           }
         }
       } else {
@@ -875,7 +878,10 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
             };
           } else {
             const field = part as any;
-            body[field.fieldname] = field.value;
+            const raw = field.value;
+            const str =
+              Buffer.isBuffer(raw) ? raw.toString('utf8') : raw != null && raw !== '' ? String(raw) : '';
+            body[field.fieldname] = str;
           }
         }
       } else {
