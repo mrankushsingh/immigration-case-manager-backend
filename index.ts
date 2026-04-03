@@ -7,6 +7,7 @@ import clientsRoutes from './routes/clients.js';
 import usersRoutes from './routes/users.js';
 import settingsRoutes from './routes/settings.js';
 import remindersRoutes from './routes/reminders.js';
+import teamTasksRoutes from './routes/teamTasks.js';
 import analyticsRoutes from './routes/analytics.js';
 import { db } from './utils/database.js';
 import { cache } from './utils/cache.js';
@@ -247,6 +248,9 @@ await fastify.register(async (fastify) => {
   
   // Reminders - general limit
   await fastify.register(remindersRoutes, { prefix: '/reminders' });
+
+  // Team tasks (TEAMS TO DO) - general limit
+  await fastify.register(teamTasksRoutes, { prefix: '/team-tasks' });
   
   // Analytics - moderate limit
   await fastify.register(async (fastify) => {

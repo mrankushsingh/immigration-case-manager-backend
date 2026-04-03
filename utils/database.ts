@@ -214,6 +214,18 @@ class DatabaseAdapter {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
+
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS team_tasks (
+          id VARCHAR(255) PRIMARY KEY,
+          team_member VARCHAR(50) NOT NULL,
+          title TEXT NOT NULL,
+          notes TEXT,
+          done BOOLEAN DEFAULT false,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
       
       // Add reminder_type column if it doesn't exist (for existing databases)
       await this.pool.query(`
@@ -359,6 +371,12 @@ class DatabaseAdapter {
       `);
       await this.pool.query(`
         CREATE INDEX IF NOT EXISTS idx_reminders_reminder_type ON reminders(reminder_type) WHERE reminder_type IS NOT NULL;
+      `);
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_team_tasks_team_member ON team_tasks(team_member);
+      `);
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_team_tasks_done ON team_tasks(done);
       `);
       
       console.log('✅ Database indexes created successfully');
@@ -1531,6 +1549,151 @@ class DatabaseAdapter {
       } catch {
         return false;
       }
+    }
+  }
+
+  // Team tasks (TEAMS TO DO dashboard)
+  async getTeamTasks(): Promise<any[]> {
+    await this.ensureInitialized();
+    if (this.usePostgres && this.pool) {
+      const result = await this.pool.query(
+        'SELECT id, team_member, title, notes, done, created_at, updated_at FROM team_tasks ORDER BY created_at DESC'
+      );
+      return result.rows;
+    }
+    const teamTasksFile = join(this.dataDir, 'team_tasks.json');
+    if (!existsSync(teamTasksFile)) return [];
+    try {
+      const list = JSON.parse(readFileSync(teamTasksFile, 'utf-8'));
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async insertTeamTask(task: {
+    team_member: string;
+    title: string;
+    notes?: string;
+  }): Promise<any> {
+    await this.ensureInitialized();
+    const id = `teamtask_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    const now = new Date().toISOString();
+    const notes = task.notes?.trim() || null;
+
+    if (this.usePostgres && this.pool) {
+      await this.pool.query(
+        `INSERT INTO team_tasks (id, team_member, title, notes, done, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, false, $5, $5)`,
+        [id, task.team_member, task.title.trim(), notes, now]
+      );
+    } else {
+      const teamTasksFile = join(this.dataDir, 'team_tasks.json');
+      let list: any[] = [];
+      if (existsSync(teamTasksFile)) {
+        try {
+          list = JSON.parse(readFileSync(teamTasksFile, 'utf-8'));
+          if (!Array.isArray(list)) list = [];
+        } catch {
+          list = [];
+        }
+      }
+      const row = {
+        id,
+        team_member: task.team_member,
+        title: task.title.trim(),
+        notes,
+        done: false,
+        created_at: now,
+        updated_at: now,
+      };
+      list.push(row);
+      writeFileSync(teamTasksFile, JSON.stringify(list, null, 2), 'utf-8');
+    }
+
+    return {
+      id,
+      team_member: task.team_member,
+      title: task.title.trim(),
+      notes,
+      done: false,
+      created_at: now,
+      updated_at: now,
+    };
+  }
+
+  async updateTeamTask(
+    id: string,
+    patch: { title?: string; notes?: string | null; done?: boolean }
+  ): Promise<any | null> {
+    await this.ensureInitialized();
+    const now = new Date().toISOString();
+
+    if (this.usePostgres && this.pool) {
+      const updates: string[] = [];
+      const values: any[] = [];
+      let paramIndex = 1;
+
+      if (patch.title !== undefined) {
+        updates.push(`title = $${paramIndex++}`);
+        values.push(patch.title.trim());
+      }
+      if (patch.notes !== undefined) {
+        updates.push(`notes = $${paramIndex++}`);
+        values.push(patch.notes === null || patch.notes === '' ? null : String(patch.notes));
+      }
+      if (patch.done !== undefined) {
+        updates.push(`done = $${paramIndex++}`);
+        values.push(!!patch.done);
+      }
+
+      if (updates.length === 0) return null;
+
+      updates.push(`updated_at = $${paramIndex++}`);
+      values.push(now);
+      values.push(id);
+
+      const query = `UPDATE team_tasks SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, team_member, title, notes, done, created_at, updated_at`;
+      const result = await this.pool.query(query, values);
+      if (result.rows.length === 0) return null;
+      return result.rows[0];
+    }
+
+    const teamTasksFile = join(this.dataDir, 'team_tasks.json');
+    if (!existsSync(teamTasksFile)) return null;
+    try {
+      const list: any[] = JSON.parse(readFileSync(teamTasksFile, 'utf-8'));
+      const index = list.findIndex((r) => r.id === id);
+      if (index === -1) return null;
+      const row = { ...list[index] };
+      if (patch.title !== undefined) row.title = patch.title.trim();
+      if (patch.notes !== undefined) row.notes = patch.notes === null || patch.notes === '' ? null : String(patch.notes);
+      if (patch.done !== undefined) row.done = !!patch.done;
+      row.updated_at = now;
+      list[index] = row;
+      writeFileSync(teamTasksFile, JSON.stringify(list, null, 2), 'utf-8');
+      return row;
+    } catch {
+      return null;
+    }
+  }
+
+  async deleteTeamTask(id: string): Promise<boolean> {
+    await this.ensureInitialized();
+    if (this.usePostgres && this.pool) {
+      const result = await this.pool.query('DELETE FROM team_tasks WHERE id = $1', [id]);
+      return (result.rowCount ?? 0) > 0;
+    }
+    const teamTasksFile = join(this.dataDir, 'team_tasks.json');
+    if (!existsSync(teamTasksFile)) return false;
+    try {
+      const list: any[] = JSON.parse(readFileSync(teamTasksFile, 'utf-8'));
+      const filtered = list.filter((r) => r.id !== id);
+      if (filtered.length === list.length) return false;
+      writeFileSync(teamTasksFile, JSON.stringify(filtered, null, 2), 'utf-8');
+      return true;
+    } catch {
+      return false;
     }
   }
 
