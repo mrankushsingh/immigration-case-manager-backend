@@ -30,6 +30,8 @@ interface Client {
   administrative_silence_days: number;
   payment: any;
   submitted_to_immigration: boolean;
+  /** Manual APPEAL modal bucket: Appeals (not automatic). */
+  recurso_in_appeals_box?: boolean;
   application_date?: string;
   custom_reminder_date?: string;
   notifications: any[];
@@ -322,6 +324,12 @@ class DatabaseAdapter {
             WHERE table_name = 'clients' AND column_name = 'justificante_presentacion'
           ) THEN
             ALTER TABLE clients ADD COLUMN justificante_presentacion JSONB;
+          END IF;
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'clients' AND column_name = 'recurso_in_appeals_box'
+          ) THEN
+            ALTER TABLE clients ADD COLUMN recurso_in_appeals_box BOOLEAN DEFAULT FALSE;
           END IF;
         END $$;
       `);
@@ -865,6 +873,7 @@ class DatabaseAdapter {
       requerimiento: this.safeParseJson(row.requerimiento, []),
       resolucion: this.safeParseJson(row.resolucion, []),
       justificante_presentacion: this.safeParseJson(row.justificante_presentacion, []),
+      recurso_in_appeals_box: row.recurso_in_appeals_box === true || row.recurso_in_appeals_box === 't',
       application_date: row.application_date ? row.application_date.toISOString() : undefined,
       custom_reminder_date: row.custom_reminder_date ? row.custom_reminder_date.toISOString() : undefined,
       created_at: row.created_at.toISOString(),
@@ -990,6 +999,7 @@ class DatabaseAdapter {
         requerimiento: (data as any).requerimiento,
         resolucion: (data as any).resolucion,
         justificante_presentacion: (data as any).justificante_presentacion,
+        recurso_in_appeals_box: (data as any).recurso_in_appeals_box,
       };
 
       for (const [key, value] of Object.entries(fields)) {
