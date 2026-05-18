@@ -20,6 +20,7 @@ import {
   containsTerm,
   isVagueFilename,
   normalize,
+  scoreDistinctiveFilenameHint,
   significantWords,
   tokenOverlapScore,
 } from './matchTerms.js';
@@ -55,7 +56,7 @@ const DOCUMENT_TYPE_KEYWORDS: Record<string, string[]> = {
   dni: ['dni', 'documento nacional de identidad', 'ministerio del interior'],
   empadronamiento: ['empadronamiento', 'padron', 'padrón', 'ayuntamiento'],
   convivencia: ['convivencia', 'cohabitation'],
-  criminal_record: ['antecedentes penales', 'criminal record', 'penados'],
+  criminal_record: ['antecedentes penales', 'criminal record', 'penados', 'penales'],
   medical: ['certificado medico', 'certificado médico', 'medical certificate'],
   health_insurance: ['seguro de salud', 'health insurance', 'seguro medico'],
   work_contract: ['contrato de trabajo', 'employment contract'],
@@ -105,6 +106,12 @@ function scoreRequiredDoc(
   let score = 0;
   const reasons: string[] = [];
   const ocrBoost = source === 'ocr' ? 1.15 : 1;
+
+  const filenameHint = scoreDistinctiveFilenameHint(searchText, doc.name);
+  if (filenameHint.score > 0) {
+    score += Math.round(filenameHint.score * ocrBoost);
+    reasons.push(filenameHint.reason);
+  }
 
   if (containsTerm(searchText, doc.name)) {
     score += Math.round(92 * ocrBoost);

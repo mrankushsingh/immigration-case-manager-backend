@@ -13,6 +13,7 @@ import {
   containsTerm,
   documentNamesAlign,
   normalize,
+  scoreDistinctiveFilenameHint,
   significantWords,
   tokenOverlapScore,
 } from './matchTerms.js';
@@ -112,6 +113,11 @@ export function scoreCatalogEntry(searchText: string, entry: CatalogDocumentEntr
   if (!text) return 0;
 
   let score = 0;
+
+  const filenameHint = scoreDistinctiveFilenameHint(searchText, entry.name);
+  if (filenameHint.score > 0) {
+    score += filenameHint.score;
+  }
 
   if (containsTerm(searchText, entry.name)) {
     score += 92;
