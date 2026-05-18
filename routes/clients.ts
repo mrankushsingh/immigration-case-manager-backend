@@ -7,11 +7,10 @@ import { uploadFile, deleteFile, isUsingBucketStorage } from '../utils/storage.j
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { sanitizeFilename, sanitizeString, sanitizeEmail, sanitizePhone, sanitizeText } from '../utils/sanitize.js';
 import { getSafeErrorMessage } from '../utils/errors.js';
-import { classifyDocument, MIN_CONFIDENCE } from '../utils/documentClassifier.js';
 import {
-  applyFileToRequiredDocAtIndex,
-  resolveRequiredDocTargetIndex,
-} from '../utils/resolveRequiredDoc.js';
+  MAX_SMART_UPLOAD_FILES,
+  runSmartUploadBatch,
+} from '../utils/smartUploadService.js';
 
 const memoryDb = db;
 
@@ -88,6 +87,57 @@ async function processFile(
     }
     return null;
   }
+}
+
+const SMART_UPLOAD_FIELD_NAMES = new Set(['file', 'files']);
+
+async function processMultipartFiles(
+  request: FastifyRequest
+): Promise<{
+  files: Array<{ buffer: Buffer; filename: string; mimetype: string; size: number }>;
+  userName?: string;
+}> {
+  const files: Array<{ buffer: Buffer; filename: string; mimetype: string; size: number }> = [];
+  let userName: string | undefined;
+
+  if (!request.isMultipart()) {
+    return { files, userName };
+  }
+
+  const parts = request.parts({ limits: MULTIPART_PARTS_LIMITS });
+  for await (const part of parts) {
+    if (part.type === 'file') {
+      const file = part as { fieldname?: string; mimetype: string; filename?: string; toBuffer: () => Promise<Buffer> };
+      const field = file.fieldname || 'file';
+      if (!SMART_UPLOAD_FIELD_NAMES.has(field)) {
+        try {
+          await file.toBuffer();
+        } catch {
+          /* consume stream */
+        }
+        continue;
+      }
+      if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+        throw new Error(`File type ${file.mimetype} is not allowed. Allowed types: PDF, images, Word, Excel`);
+      }
+      const buffer = await file.toBuffer();
+      files.push({
+        buffer,
+        filename: file.filename || 'unknown',
+        mimetype: file.mimetype,
+        size: buffer.length,
+      });
+    } else {
+      const field = part as { fieldname: string; value: unknown };
+      if (field.fieldname === 'userName') {
+        const raw = field.value;
+        userName =
+          Buffer.isBuffer(raw) ? raw.toString('utf8') : raw != null && raw !== '' ? String(raw) : '';
+      }
+    }
+  }
+
+  return { files, userName };
 }
 
 // Helper function to save file locally
@@ -395,132 +445,69 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  // Smart upload: auto-detect document type (passport, visa, etc.) and route to required checklist
+  // Smart upload: one or many files — auto-detect type and route to required checklist
   fastify.post('/:id/smart-upload', async (request: AuthenticatedRequest, reply) => {
     try {
       const { id } = request.params as { id: string };
-      const fileData = await processFile(request);
-      if (!fileData) {
+
+      let files: Array<{ buffer: Buffer; filename: string; mimetype: string; size: number }> = [];
+      let formUserName: string | undefined;
+
+      if (request.isMultipart()) {
+        const parsed = await processMultipartFiles(request);
+        files = parsed.files;
+        formUserName = parsed.userName;
+      } else {
+        const single = await processFile(request);
+        if (single) files = [single];
+      }
+
+      if (!files.length) {
         return reply.status(400).send({ error: 'No file uploaded or file upload failed' });
       }
 
-      const userName = await getUserName(request);
-      const client = await memoryDb.getClient(id);
-      if (!client) {
-        return reply.status(404).send({ error: 'Client not found' });
+      if (files.length > MAX_SMART_UPLOAD_FILES) {
+        return reply.status(400).send({
+          error: `Maximum ${MAX_SMART_UPLOAD_FILES} files per smart upload`,
+        });
       }
 
-      const requiredDocs = (client.required_documents || []) as Array<{
-        code: string;
-        name: string;
-        description?: string;
-        submitted?: boolean;
-      }>;
+      const userName = formUserName?.trim() || (await getUserName(request));
 
-      const allTemplates = await memoryDb.getTemplates();
-
-      const classification = await classifyDocument(
-        fileData.filename,
-        fileData.mimetype,
-        fileData.buffer,
-        requiredDocs,
-        { allTemplates }
+      const { client, results } = await runSmartUploadBatch(
+        id,
+        files,
+        userName,
+        saveFileLocally
       );
 
-      let fileUrl: string;
-      if (isUsingBucketStorage()) {
-        const uniqueSuffix = `${Date.now()}_${Math.round(Math.random() * 1E9)}`;
-        const ext = extname(fileData.filename);
-        const name = fileData.filename.replace(ext, '').replace(/[^a-zA-Z0-9]/g, '_');
-        const storedName = `${name}_${uniqueSuffix}${ext}`;
-        fileUrl = await uploadFile(fileData.buffer, storedName, fileData.mimetype);
-      } else {
-        fileUrl = saveFileLocally(fileData.buffer, fileData.filename);
-      }
-
-      let routedTo: 'required' | 'all_documents' = 'all_documents';
-      let updated: typeof client = client;
-
-      if (
-        classification.documentCode &&
-        classification.confidence >= MIN_CONFIDENCE
-      ) {
-        const targetIdx = resolveRequiredDocTargetIndex(
-          requiredDocs,
-          classification,
-          fileData.filename
-        );
-
-        if (targetIdx < 0) {
-          return reply.status(400).send({
-            error: 'Could not determine which required document slot to use',
-          });
-        }
-
-        const targetDoc = requiredDocs[targetIdx];
-        const existing = (client.required_documents || [])[targetIdx] as any;
-        if (existing?.fileUrl?.startsWith('/uploads/')) {
-          deleteFile(existing.fileUrl).catch((err) => {
-            console.error('Error deleting old file:', err);
-          });
-        }
-
-        const updatedDocuments = applyFileToRequiredDocAtIndex(
-          client.required_documents || [],
-          targetIdx,
-          {
-            fileUrl,
-            fileName: fileData.filename,
-            fileSize: fileData.size,
-            uploadedBy: userName,
-          }
-        );
-
-        classification.documentCode = targetDoc.code;
-        classification.documentName = targetDoc.name;
-
-        const requiredUpdated = await memoryDb.updateClient(id, {
-          required_documents: updatedDocuments,
-        });
-        if (!requiredUpdated) {
-          return reply.status(500).send({ error: 'Failed to update client' });
-        }
-        updated = requiredUpdated;
-        routedTo = 'required';
-      } else {
-        const reminderDays = 10;
-        const reminderDate = new Date();
-        reminderDate.setDate(reminderDate.getDate() + reminderDays);
-        const newDocument = {
-          id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          name: fileData.filename,
-          allDocumentsSection: true,
-          fileUrl,
-          fileName: fileData.filename,
-          fileSize: fileData.size,
-          uploadedAt: new Date().toISOString(),
-          uploadedBy: userName,
-          reminder_days: reminderDays,
-          reminder_date: reminderDate.toISOString(),
-          created_at: new Date().toISOString(),
-        };
-        const additionalUpdated = await memoryDb.updateClient(id, {
-          additional_documents: [...(client.additional_documents || []), newDocument],
-        });
-        if (!additionalUpdated) {
-          return reply.status(500).send({ error: 'Failed to update client' });
-        }
-        updated = additionalUpdated;
-      }
+      const succeeded = results.filter((r) => r.success);
+      const failed = results.filter((r) => !r.success);
+      const lastSuccess = succeeded[succeeded.length - 1];
 
       return reply.send({
-        ...updated,
-        classification: {
-          ...classification,
-          routedTo,
+        ...client,
+        uploads: results,
+        summary: {
+          total: results.length,
+          succeeded: succeeded.length,
+          failed: failed.length,
         },
+        classification: lastSuccess?.classification ?? {
+          documentCode: null,
+          documentName: null,
+          confidence: 0,
+          method: 'none',
+          routedTo: 'all_documents',
+        },
+        ...(failed.length > 0 && succeeded.length === 0
+          ? { error: failed.map((f) => `${f.fileName}: ${f.error}`).join('; ') }
+          : {}),
       });
     } catch (error: any) {
+      if (error.message === 'Client not found') {
+        return reply.status(404).send({ error: error.message });
+      }
       if (error.message?.includes('File type')) {
         return reply.status(400).send({ error: error.message });
       }

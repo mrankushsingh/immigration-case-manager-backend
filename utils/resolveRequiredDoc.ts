@@ -10,6 +10,18 @@ import {
   tokenOverlapScore,
 } from './matchTerms.js';
 
+type DocRow = RequiredDocRef & { fileUrl?: string };
+
+function isOpenSlot(doc: DocRow): boolean {
+  return !doc.submitted && !doc.fileUrl;
+}
+
+/** Prefer empty checklist rows when several share the same code (batch uploads). */
+function preferOpenSlots<T extends { d: DocRow; i: number }>(candidates: T[]): T[] {
+  const open = candidates.filter(({ d }) => isOpenSlot(d));
+  return open.length > 0 ? open : candidates;
+}
+
 export function resolveRequiredDocTargetIndex(
   docs: RequiredDocRef[],
   classification: Pick<ClassificationResult, 'documentCode' | 'documentName'>,
@@ -25,44 +37,65 @@ export function resolveRequiredDocTargetIndex(
 
   if (classification.documentName) {
     const normTarget = normalize(classification.documentName);
-    const exactIdx = docs.findIndex((d) => normalize(d.name) === normTarget);
-    if (exactIdx >= 0) return exactIdx;
+    const exactMatches = docs
+      .map((d, i) => ({ d, i }))
+      .filter(({ d }) => normalize(d.name) === normTarget);
+    if (exactMatches.length === 1) return exactMatches[0].i;
+    if (exactMatches.length > 1) {
+      return pickBestScoredIndex(preferOpenSlots(exactMatches), fileName);
+    }
   }
 
   if (classification.documentCode) {
-    const sameCode = docs
-      .map((d, i) => ({ d, i }))
-      .filter(({ d }) => d.code === classification.documentCode);
+    const sameCode = preferOpenSlots(
+      docs
+        .map((d, i) => ({ d, i }))
+        .filter(({ d }) => d.code === classification.documentCode)
+    );
 
     if (sameCode.length === 1) return sameCode[0].i;
 
     if (sameCode.length > 1) {
-      let bestIdx = sameCode[0].i;
-      let bestScore = -1;
-      for (const { d, i } of sameCode) {
-        const hint = scoreDistinctiveFilenameHint(fileName, d.name);
-        const score = hint.score + tokenOverlapScore(fileName, d.name);
-        if (score > bestScore) {
-          bestScore = score;
-          bestIdx = i;
-        }
-      }
-      return bestIdx;
+      return pickBestScoredIndex(sameCode, fileName);
     }
   }
 
   if (classification.documentName) {
-    const fuzzyIdx = docs.findIndex((d) =>
-      normalize(d.name).includes(normalize(classification.documentName!))
+    const fuzzyMatches = preferOpenSlots(
+      docs
+        .map((d, i) => ({ d, i }))
+        .filter(({ d }) =>
+          normalize(d.name).includes(normalize(classification.documentName!))
+        )
     );
-    if (fuzzyIdx >= 0) return fuzzyIdx;
+    if (fuzzyMatches.length > 0) return fuzzyMatches[0].i;
   }
 
   if (classification.documentCode) {
-    return docs.findIndex((d) => d.code === classification.documentCode);
+    const codeMatches = preferOpenSlots(
+      docs.map((d, i) => ({ d, i })).filter(({ d }) => d.code === classification.documentCode)
+    );
+    if (codeMatches.length > 0) return codeMatches[0].i;
   }
 
   return -1;
+}
+
+function pickBestScoredIndex(
+  candidates: Array<{ d: DocRow; i: number }>,
+  fileName: string
+): number {
+  let bestIdx = candidates[0].i;
+  let bestScore = -1;
+  for (const { d, i } of candidates) {
+    const hint = scoreDistinctiveFilenameHint(fileName, d.name);
+    const score = hint.score + tokenOverlapScore(fileName, d.name);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
 }
 
 function pickBestIndexByFilenameHint(docs: RequiredDocRef[], fileName: string): number {
@@ -70,8 +103,11 @@ function pickBestIndexByFilenameHint(docs: RequiredDocRef[], fileName: string): 
   let bestScore = 0;
   for (let i = 0; i < docs.length; i += 1) {
     const hint = scoreDistinctiveFilenameHint(fileName, docs[i].name);
-    if (hint.score > bestScore) {
-      bestScore = hint.score;
+    const row = docs[i] as DocRow;
+    const openBonus = isOpenSlot(row) ? 0.5 : 0;
+    const score = hint.score + openBonus;
+    if (score > bestScore) {
+      bestScore = score;
       bestIdx = i;
     }
   }
