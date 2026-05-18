@@ -65,7 +65,6 @@ const FILENAME_DOC_STEMS: Array<{ stem: string; inDocName: RegExp }> = [
   { stem: 'matrimonio', inDocName: /matrimonio/i },
   { stem: 'nacimiento', inDocName: /nacimiento/i },
   { stem: 'convivencia', inDocName: /convivencia/i },
-  { stem: 'motion', inDocName: /divorcio/i },
   { stem: 'divorcio', inDocName: /divorcio/i },
   { stem: 'contrato', inDocName: /contrato/i },
   { stem: 'bancario', inDocName: /bancario|bancarios|extracto/i },
