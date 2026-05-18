@@ -234,6 +234,16 @@ function pickBestByClientFilenameHint(
   return best;
 }
 
+function preferCandidate(
+  current: MatchCandidate | null,
+  candidate: MatchCandidate | null
+): MatchCandidate | null {
+  if (candidate && (!current || candidate.score > current.score)) {
+    return candidate;
+  }
+  return current;
+}
+
 function pickBestMatch(
   fileName: string,
   ocrText: string,
@@ -244,14 +254,9 @@ function pickBestMatch(
   const vagueName = isVagueFilename(fileName);
   const filenameHint = pickBestByClientFilenameHint(fileName, requiredDocuments);
 
-  const consider = (candidate: MatchCandidate | null) => {
-    if (candidate && (!best || candidate.score > best.score)) {
-      best = candidate;
-    }
-  };
-
   if (!vagueName) {
-    consider(
+    best = preferCandidate(
+      best,
       pickBestFromCatalog(fileName, requiredDocuments, catalog, false, PRE_OCR_MIN_CONFIDENCE)
     );
   }
@@ -265,7 +270,7 @@ function pickBestMatch(
           : 999
         : PRE_OCR_MIN_CONFIDENCE;
     if (fileScore.score >= minFile) {
-      consider({
+      best = preferCandidate(best, {
         doc,
         score: fileScore.score,
         reason: fileScore.reason,
@@ -275,14 +280,15 @@ function pickBestMatch(
   }
 
   if (ocrText.length >= 20) {
-    consider(
+    best = preferCandidate(
+      best,
       pickBestFromCatalog(ocrText, requiredDocuments, catalog, true, MIN_CONFIDENCE)
     );
 
     for (const doc of requiredDocuments) {
       const ocrScore = scoreRequiredDoc(ocrText, doc, 'ocr');
       if (ocrScore.score >= MIN_CONFIDENCE) {
-        consider({
+        best = preferCandidate(best, {
           doc,
           score: ocrScore.score,
           reason: ocrScore.reason,
@@ -292,9 +298,9 @@ function pickBestMatch(
     }
   }
 
-  if (filenameHint && filenameHint.score >= 88) {
-    const bestScore = best?.score ?? 0;
-    const bestMethod = best?.method ?? 'none';
+  if (filenameHint !== null && filenameHint.score >= 88) {
+    const bestScore = best ? best.score : 0;
+    const bestMethod = best ? best.method : 'none';
     if (
       filenameHint.score > bestScore ||
       (filenameHint.score >= 92 && bestMethod === 'ocr' && filenameHint.score > bestScore)
