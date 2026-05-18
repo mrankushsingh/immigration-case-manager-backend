@@ -7,6 +7,7 @@ import { uploadFile, deleteFile, isUsingBucketStorage } from '../utils/storage.j
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { sanitizeFilename, sanitizeString, sanitizeEmail, sanitizePhone, sanitizeText } from '../utils/sanitize.js';
 import { getSafeErrorMessage } from '../utils/errors.js';
+import { classifyDocument } from '../utils/documentClassifier.js';
 
 const memoryDb = db;
 
@@ -23,8 +24,8 @@ const ALLOWED_MIME_TYPES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 ];
 
-/** Default @fastify/multipart file limit is 1MB unless passed here — large PDFs fail without this. */
-const MULTIPART_PARTS_LIMITS = { fileSize: 50 * 1024 * 1024 };
+/** Default @fastify/multipart per-file limit is 1MB — must set explicitly for large PDF scans. */
+export const MULTIPART_PARTS_LIMITS = { fileSize: 50 * 1024 * 1024 };
 
 // Helper function to get user name from request
 async function getUserName(request: AuthenticatedRequest): Promise<string> {
@@ -387,6 +388,119 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ error: 'File size exceeds 50MB limit' });
       }
       return reply.status(500).send({ error: getSafeErrorMessage(error, 'Failed to upload document') });
+    }
+  });
+
+  // Smart upload: auto-detect document type (passport, visa, etc.) and route to required checklist
+  fastify.post('/:id/smart-upload', async (request: AuthenticatedRequest, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      const fileData = await processFile(request);
+      if (!fileData) {
+        return reply.status(400).send({ error: 'No file uploaded or file upload failed' });
+      }
+
+      const userName = await getUserName(request);
+      const client = await memoryDb.getClient(id);
+      if (!client) {
+        return reply.status(404).send({ error: 'Client not found' });
+      }
+
+      const requiredDocs = (client.required_documents || []) as Array<{
+        code: string;
+        name: string;
+        description?: string;
+        submitted?: boolean;
+      }>;
+
+      const classification = await classifyDocument(
+        fileData.filename,
+        fileData.mimetype,
+        fileData.buffer,
+        requiredDocs
+      );
+
+      let fileUrl: string;
+      if (isUsingBucketStorage()) {
+        const uniqueSuffix = `${Date.now()}_${Math.round(Math.random() * 1E9)}`;
+        const ext = extname(fileData.filename);
+        const name = fileData.filename.replace(ext, '').replace(/[^a-zA-Z0-9]/g, '_');
+        const storedName = `${name}_${uniqueSuffix}${ext}`;
+        fileUrl = await uploadFile(fileData.buffer, storedName, fileData.mimetype);
+      } else {
+        fileUrl = saveFileLocally(fileData.buffer, fileData.filename);
+      }
+
+      let routedTo: 'required' | 'all_documents' = 'all_documents';
+      let updated: typeof client = client;
+
+      if (classification.documentCode) {
+        const updatedDocuments = (client.required_documents || []).map((doc: any) => {
+          if (doc.code === classification.documentCode) {
+            if (doc.fileUrl && doc.fileUrl.startsWith('/uploads/')) {
+              deleteFile(doc.fileUrl).catch((err) => {
+                console.error('Error deleting old file:', err);
+              });
+            }
+            return {
+              ...doc,
+              submitted: true,
+              fileUrl,
+              uploadedAt: new Date().toISOString(),
+              fileName: fileData.filename,
+              fileSize: fileData.size,
+              uploadedBy: userName,
+            };
+          }
+          return doc;
+        });
+
+        const requiredUpdated = await memoryDb.updateClient(id, {
+          required_documents: updatedDocuments,
+        });
+        if (!requiredUpdated) {
+          return reply.status(500).send({ error: 'Failed to update client' });
+        }
+        updated = requiredUpdated;
+        routedTo = 'required';
+      } else {
+        const reminderDays = 10;
+        const reminderDate = new Date();
+        reminderDate.setDate(reminderDate.getDate() + reminderDays);
+        const newDocument = {
+          id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          name: fileData.filename,
+          allDocumentsSection: true,
+          fileUrl,
+          fileName: fileData.filename,
+          fileSize: fileData.size,
+          uploadedAt: new Date().toISOString(),
+          uploadedBy: userName,
+          reminder_days: reminderDays,
+          reminder_date: reminderDate.toISOString(),
+          created_at: new Date().toISOString(),
+        };
+        const additionalUpdated = await memoryDb.updateClient(id, {
+          additional_documents: [...(client.additional_documents || []), newDocument],
+        });
+        if (!additionalUpdated) {
+          return reply.status(500).send({ error: 'Failed to update client' });
+        }
+        updated = additionalUpdated;
+      }
+
+      return reply.send({
+        ...updated,
+        classification: {
+          ...classification,
+          routedTo,
+        },
+      });
+    } catch (error: any) {
+      if (error.message?.includes('File type')) {
+        return reply.status(400).send({ error: error.message });
+      }
+      return reply.status(500).send({ error: getSafeErrorMessage(error, 'Smart upload failed') });
     }
   });
 

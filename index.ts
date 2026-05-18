@@ -21,9 +21,12 @@ import { dirname, join } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+/** Must match multipart fileSize in routes/clients.ts (50MB uploads for large PDF scans) */
+const MAX_UPLOAD_BYTES = 52 * 1024 * 1024;
+
 const fastify = Fastify({
   logger: true,
-  bodyLimit: 10 * 1024 * 1024, // 10MB
+  bodyLimit: MAX_UPLOAD_BYTES,
 });
 
 const PORT = Number(process.env.PORT) || 4000;
