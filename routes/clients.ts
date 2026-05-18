@@ -413,11 +413,14 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
         submitted?: boolean;
       }>;
 
+      const allTemplates = await memoryDb.getTemplates();
+
       const classification = await classifyDocument(
         fileData.filename,
         fileData.mimetype,
         fileData.buffer,
-        requiredDocs
+        requiredDocs,
+        { allTemplates }
       );
 
       let fileUrl: string;
