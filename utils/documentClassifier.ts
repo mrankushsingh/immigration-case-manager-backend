@@ -293,9 +293,12 @@ function pickBestMatch(
   }
 
   if (filenameHint && filenameHint.score >= 88) {
-    if (!best || filenameHint.score > best.score) {
-      best = filenameHint;
-    } else if (filenameHint.score >= 92 && best!.method !== 'keywords') {
+    const bestScore = best?.score ?? 0;
+    const bestMethod = best?.method ?? 'none';
+    if (
+      filenameHint.score > bestScore ||
+      (filenameHint.score >= 92 && bestMethod === 'ocr' && filenameHint.score > bestScore)
+    ) {
       best = filenameHint;
     }
   }
