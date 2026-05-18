@@ -7,7 +7,7 @@ import { uploadFile, deleteFile, isUsingBucketStorage } from '../utils/storage.j
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { sanitizeFilename, sanitizeString, sanitizeEmail, sanitizePhone, sanitizeText } from '../utils/sanitize.js';
 import { getSafeErrorMessage } from '../utils/errors.js';
-import { classifyDocument } from '../utils/documentClassifier.js';
+import { classifyDocument, MIN_CONFIDENCE } from '../utils/documentClassifier.js';
 
 const memoryDb = db;
 
@@ -437,9 +437,14 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       let routedTo: 'required' | 'all_documents' = 'all_documents';
       let updated: typeof client = client;
 
-      if (classification.documentCode) {
+      if (
+        classification.documentCode &&
+        classification.confidence >= MIN_CONFIDENCE
+      ) {
+        let updatedCount = 0;
         const updatedDocuments = (client.required_documents || []).map((doc: any) => {
           if (doc.code === classification.documentCode) {
+            updatedCount += 1;
             if (doc.fileUrl && doc.fileUrl.startsWith('/uploads/')) {
               deleteFile(doc.fileUrl).catch((err) => {
                 console.error('Error deleting old file:', err);
@@ -457,6 +462,12 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
           }
           return doc;
         });
+
+        if (updatedCount !== 1) {
+          console.warn(
+            `Smart upload: expected 1 required doc update, got ${updatedCount} for code ${classification.documentCode}`
+          );
+        }
 
         const requiredUpdated = await memoryDb.updateClient(id, {
           required_documents: updatedDocuments,

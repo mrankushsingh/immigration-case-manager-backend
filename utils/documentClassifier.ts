@@ -14,9 +14,15 @@ import {
   buildTemplateDocumentCatalog,
   resolveClientDocForCatalogName,
   scoreCatalogEntry,
-  tokenOverlap,
   type CatalogDocumentEntry,
 } from './templateDocumentIndex.js';
+import {
+  containsTerm,
+  isVagueFilename,
+  normalize,
+  significantWords,
+  tokenOverlapScore,
+} from './matchTerms.js';
 
 export interface RequiredDocRef {
   code: string;
@@ -68,69 +74,92 @@ const DOCUMENT_TYPE_KEYWORDS: Record<string, string[]> = {
   tax_agency: ['agencia tributaria', 'tax agency'],
   employer_dni: ['empleador', 'employer'],
   authorization_parent: ['autorizacion', 'autorización', 'progenitor'],
+  immigration_form: [
+    'formulario ex',
+    'solicitud ex',
+    'modelo ex',
+    'ex 24',
+    'ex-24',
+    'ex 15',
+    'ex-15',
+    'ex 17',
+    'ex-17',
+    'expediente ex',
+  ],
 };
 
-const MIN_CONFIDENCE = 42;
-const PRE_OCR_MIN_CONFIDENCE = 45;
+/** Minimum score to assign a required-document slot (avoids wrong guesses). */
+export const MIN_CONFIDENCE = 58;
+const PRE_OCR_MIN_CONFIDENCE = 62;
 const OCR_PREVIEW_LEN = 120;
 
-function normalize(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+const PASSPORT_LIKE = /pasaporte|passport/i;
 
 function scoreRequiredDoc(
   searchText: string,
   doc: RequiredDocRef,
   source: 'filename' | 'ocr'
 ): { score: number; reason: string } {
-  const text = normalize(searchText);
   const docName = normalize(doc.name);
   const docCode = normalize(doc.code);
   let score = 0;
   const reasons: string[] = [];
   const ocrBoost = source === 'ocr' ? 1.15 : 1;
 
-  if (
-    text.includes(docName) ||
-    (docName.length > 8 && docName.split(' ').filter((w) => w.length > 4).every((w) => text.includes(w)))
-  ) {
+  if (containsTerm(searchText, doc.name)) {
     score += Math.round(92 * ocrBoost);
     reasons.push(source === 'ocr' ? 'OCR matches document name' : 'filename matches document name');
+  } else {
+    const nameWords = significantWords(doc.name);
+    if (nameWords.length >= 2 && nameWords.every((w) => containsTerm(searchText, w))) {
+      score += Math.round(85 * ocrBoost);
+      reasons.push('all document name words found');
+    }
   }
 
-  score += Math.round(tokenOverlap(searchText, doc.name) * ocrBoost);
+  score += Math.round(tokenOverlapScore(searchText, doc.name) * ocrBoost);
   if (doc.description) {
-    score += Math.min(Math.round(tokenOverlap(searchText, doc.description) * ocrBoost), 18);
+    score += Math.min(Math.round(tokenOverlapScore(searchText, doc.description) * ocrBoost), 18);
   }
 
-  if (docCode.length > 3 && text.includes(docCode)) {
+  if (docCode.length >= 4 && containsTerm(searchText, doc.code)) {
     score += Math.round(35 * ocrBoost);
     reasons.push('matches document code');
   }
 
   for (const [, keywords] of Object.entries(DOCUMENT_TYPE_KEYWORDS)) {
-    const textHits = keywords.some((k) => text.includes(normalize(k)));
-    const docHits = keywords.some((k) => docName.includes(normalize(k)));
-    if (textHits && docHits) {
-      score += Math.round(78 * ocrBoost);
-      reasons.push(`keyword: ${keywords[0]}`);
+    const docHits = keywords.some((k) => containsTerm(doc.name, k));
+    if (!docHits) continue;
+
+    const matchedKeywords = keywords.filter((k) => containsTerm(searchText, k));
+    if (matchedKeywords.length === 0) continue;
+
+    const isPassportDoc = PASSPORT_LIKE.test(doc.name);
+    if (isPassportDoc && matchedKeywords.length < 2 && source === 'ocr') {
+      continue;
     }
+
+    score += Math.round((40 + matchedKeywords.length * 22) * ocrBoost);
+    reasons.push(`keyword: ${matchedKeywords[0]}`);
   }
 
   const ocrCategories = getOcrCategoriesForDocName(doc.name);
+  let phraseHitCount = 0;
   for (const cat of ocrCategories) {
     const phrases = OCR_PHRASE_HINTS[cat] || [];
-    const phraseHits = phrases.filter((p) => text.includes(normalize(p)));
-    if (phraseHits.length > 0) {
-      score += Math.round((50 + phraseHits.length * 12) * ocrBoost);
-      reasons.push(`phrase: ${phraseHits[0]}`);
+    for (const p of phrases) {
+      if (containsTerm(searchText, p)) {
+        phraseHitCount += 1;
+        if (phraseHitCount <= 2) {
+          score += Math.round(35 * ocrBoost);
+          reasons.push(`phrase: ${p}`);
+        }
+      }
     }
+  }
+
+  if (PASSPORT_LIKE.test(doc.name) && phraseHitCount < 2 && source === 'ocr' && score < 70) {
+    score = Math.min(score, 50);
   }
 
   if (!doc.submitted) {
@@ -154,7 +183,8 @@ function pickBestFromCatalog(
   searchText: string,
   clientDocs: RequiredDocRef[],
   catalog: CatalogDocumentEntry[],
-  useOcr: boolean
+  useOcr: boolean,
+  minScore: number
 ): MatchCandidate | null {
   if (!searchText.trim() || !catalog.length) return null;
 
@@ -162,7 +192,7 @@ function pickBestFromCatalog(
 
   for (const entry of catalog) {
     const catalogScore = scoreCatalogEntry(searchText, entry);
-    if (catalogScore < PRE_OCR_MIN_CONFIDENCE) continue;
+    if (catalogScore < minScore) continue;
 
     const clientDoc = resolveClientDocForCatalogName(entry.name, clientDocs);
     if (!clientDoc) continue;
@@ -185,6 +215,7 @@ function pickBestMatch(
   catalog: CatalogDocumentEntry[]
 ): MatchCandidate | null {
   let best: MatchCandidate | null = null;
+  const vagueName = isVagueFilename(fileName);
 
   const consider = (candidate: MatchCandidate | null) => {
     if (candidate && (!best || candidate.score > best.score)) {
@@ -192,11 +223,21 @@ function pickBestMatch(
     }
   };
 
-  consider(pickBestFromCatalog(fileName, requiredDocuments, catalog, false));
+  if (!vagueName) {
+    consider(
+      pickBestFromCatalog(fileName, requiredDocuments, catalog, false, PRE_OCR_MIN_CONFIDENCE)
+    );
+  }
 
   for (const doc of requiredDocuments) {
     const fileScore = scoreRequiredDoc(fileName, doc, 'filename');
-    if (fileScore.score >= PRE_OCR_MIN_CONFIDENCE) {
+    const minFile =
+      vagueName
+        ? containsTerm(fileName, doc.name)
+          ? PRE_OCR_MIN_CONFIDENCE
+          : 999
+        : PRE_OCR_MIN_CONFIDENCE;
+    if (fileScore.score >= minFile) {
       consider({
         doc,
         score: fileScore.score,
@@ -206,8 +247,10 @@ function pickBestMatch(
     }
   }
 
-  if (ocrText.length >= 15) {
-    consider(pickBestFromCatalog(ocrText, requiredDocuments, catalog, true));
+  if (ocrText.length >= 20) {
+    consider(
+      pickBestFromCatalog(ocrText, requiredDocuments, catalog, true, MIN_CONFIDENCE)
+    );
 
     for (const doc of requiredDocuments) {
       const ocrScore = scoreRequiredDoc(ocrText, doc, 'ocr');
@@ -220,9 +263,6 @@ function pickBestMatch(
         });
       }
     }
-
-    const combined = `${fileName} ${ocrText}`;
-    consider(pickBestFromCatalog(combined, requiredDocuments, catalog, true));
   }
 
   return best;
@@ -428,7 +468,6 @@ export async function classifyDocument(
     return ocrResult;
   }
 
-  // —— Phase 3: Gemini ——
   const geminiResult = await classifyWithGemini(
     fileName,
     mimeType,
@@ -437,16 +476,22 @@ export async function classifyDocument(
     ocrText,
     catalog
   );
-  if (geminiResult?.documentCode) {
+  if (geminiResult?.documentCode && geminiResult.confidence >= MIN_CONFIDENCE) {
     return geminiResult;
   }
 
-  if (ocrResult.documentCode) {
-    return ocrResult;
-  }
-  if (preOcrResult.documentCode) {
-    return preOcrResult;
-  }
+  return {
+    documentCode: null,
+    documentName: null,
+    confidence: Math.max(ocrResult.confidence, preOcrResult.confidence),
+    method: 'none',
+    reason: vagueFilenameLabel(fileName)
+      ? `Filename "${fileName}" is too vague — add to All Documents or rename (e.g. pasaporte.pdf)`
+      : 'No confident match — file saved to All Documents',
+    ocrPreview: ocrText ? ocrText.slice(0, OCR_PREVIEW_LEN) : undefined,
+  };
+}
 
-  return geminiResult ?? ocrResult;
+function vagueFilenameLabel(fileName: string): boolean {
+  return isVagueFilename(fileName);
 }

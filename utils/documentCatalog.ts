@@ -56,6 +56,10 @@ export const PREDEFINED_DOCUMENT_NAMES = [
   'Tres últimas nóminas',
   'Memoria descriptiva de la ocupación',
   'Otra documentación del despacho',
+  'Formulario EX-24',
+  'Solicitud EX-24',
+  'Formulario EX-15',
+  'Formulario EX-17',
 ] as const;
 
 /** Phrases often visible on scanned pages (Spanish / English) */
@@ -101,6 +105,10 @@ export const OCR_PHRASE_HINTS: Record<string, string[]> = {
   vat: ['iva', 'autoliquidacion', 'autoliquidación', 'modelo 303'],
   social_security: ['seguridad social', 'corriente de pago', 'estar al corriente'],
   authorization_parent: ['autorizacion', 'autorización', 'progenitor', 'menor'],
+  immigration_form: [
+    'formulario ex', 'solicitud ex', 'modelo ex', 'ex 24', 'ex-24',
+    'ex 15', 'ex 17', 'extranjeria', 'extranjería', 'ministerio de inclusion',
+  ],
 };
 
 /** Link catalog categories to template document name substrings */
@@ -129,6 +137,7 @@ export const CATALOG_NAME_TO_CATEGORIES: Array<{ match: RegExp; categories: stri
   { match: /seguridad social/i, categories: ['social_security', 'labor_report'] },
   { match: /agencia tributaria/i, categories: ['tax'] },
   { match: /autorizacion del otro progenitor|autorización del otro progenitor/i, categories: ['authorization_parent'] },
+  { match: /formulario ex|solicitud ex|ex[\s-]*24|ex[\s-]*15|ex[\s-]*17/i, categories: ['immigration_form'] },
 ];
 
 export function getOcrCategoriesForDocName(docName: string): string[] {

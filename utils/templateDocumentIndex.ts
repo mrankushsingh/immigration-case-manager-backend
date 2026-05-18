@@ -9,6 +9,13 @@ import {
   getOcrCategoriesForDocName,
 } from './documentCatalog.js';
 import type { RequiredDocRef } from './documentClassifier.js';
+import {
+  containsTerm,
+  documentNamesAlign,
+  normalize,
+  significantWords,
+  tokenOverlapScore,
+} from './matchTerms.js';
 
 export interface CatalogDocumentEntry {
   name: string;
@@ -16,26 +23,14 @@ export interface CatalogDocumentEntry {
   keywords: string[];
 }
 
-function normalize(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 function keywordsForDocumentName(name: string): string[] {
-  const words = normalize(name)
-    .split(' ')
-    .filter((w) => w.length > 3);
+  const words = significantWords(name);
   const set = new Set<string>(words);
 
   for (const cat of getOcrCategoriesForDocName(name)) {
     for (const phrase of OCR_PHRASE_HINTS[cat] || []) {
       const p = normalize(phrase);
-      if (p.length > 2) set.add(p);
+      if (p.length >= 4) set.add(p);
     }
   }
 
@@ -59,7 +54,6 @@ function addEntry(
   });
 }
 
-/** All unique document names from predefined list + every case template. */
 export function buildTemplateDocumentCatalog(
   templates: Array<{ required_documents?: Array<{ name?: string; code?: string }> }>
 ): CatalogDocumentEntry[] {
@@ -79,44 +73,30 @@ export function buildTemplateDocumentCatalog(
   return catalog;
 }
 
-export function tokenOverlap(a: string, b: string): number {
-  const wordsA = new Set(normalize(a).split(' ').filter((w) => w.length > 3));
-  const wordsB = normalize(b).split(' ').filter((w) => w.length > 3);
-  if (wordsA.size === 0 || wordsB.length === 0) return 0;
-  let hits = 0;
-  for (const w of wordsB) {
-    if (wordsA.has(w)) hits += 1;
-  }
-  return Math.round((hits / Math.max(wordsB.length, 1)) * 40);
-}
+export { tokenOverlapScore as tokenOverlap };
 
-/** Map a catalog / template document name to this client's required_documents slot. */
+/** Map catalog document name → one client required_documents row (strict). */
 export function resolveClientDocForCatalogName(
   catalogName: string,
   clientDocs: RequiredDocRef[]
 ): RequiredDocRef | null {
   if (!clientDocs.length) return null;
 
-  const normCatalog = normalize(catalogName);
-
-  const exact = clientDocs.find((d) => normalize(d.name) === normCatalog);
+  const exact = clientDocs.find((d) => normalize(d.name) === normalize(catalogName));
   if (exact) return exact;
 
   let best: RequiredDocRef | null = null;
   let bestScore = 0;
 
   for (const doc of clientDocs) {
-    const normDoc = normalize(doc.name);
-    let score = tokenOverlap(catalogName, doc.name);
+    if (!documentNamesAlign(catalogName, doc.name)) continue;
 
-    if (normCatalog.includes(normDoc) || normDoc.includes(normCatalog)) {
-      score += 50;
-    }
+    let score = tokenOverlapScore(catalogName, doc.name) + 40;
 
-    const catalogWords = normCatalog.split(' ').filter((w) => w.length > 4);
-    const docWords = normDoc.split(' ').filter((w) => w.length > 4);
-    const shared = catalogWords.filter((w) => docWords.includes(w));
-    score += shared.length * 15;
+    const shared = significantWords(catalogName).filter((w) =>
+      significantWords(doc.name).includes(w)
+    );
+    score += shared.length * 12;
 
     if (score > bestScore) {
       bestScore = score;
@@ -124,7 +104,7 @@ export function resolveClientDocForCatalogName(
     }
   }
 
-  return bestScore >= 28 ? best : null;
+  return bestScore >= 50 ? best : null;
 }
 
 export function scoreCatalogEntry(searchText: string, entry: CatalogDocumentEntry): number {
@@ -133,21 +113,28 @@ export function scoreCatalogEntry(searchText: string, entry: CatalogDocumentEntr
 
   let score = 0;
 
-  if (text.includes(entry.normalizedName)) {
-    score += 90;
+  if (containsTerm(searchText, entry.name)) {
+    score += 92;
   }
 
-  const nameWords = entry.normalizedName.split(' ').filter((w) => w.length > 4);
-  if (nameWords.length > 0 && nameWords.every((w) => text.includes(w))) {
-    score += 85;
+  const nameWords = significantWords(entry.name);
+  if (nameWords.length >= 2 && nameWords.every((w) => containsTerm(searchText, w))) {
+    score += 80;
   }
 
-  score += tokenOverlap(searchText, entry.name);
+  score += tokenOverlapScore(searchText, entry.name);
 
+  let keywordHits = 0;
   for (const kw of entry.keywords) {
-    if (kw.length > 3 && text.includes(kw)) {
-      score += 35;
+    if (containsTerm(searchText, kw)) {
+      keywordHits += 1;
+      score += 28;
     }
+  }
+
+  // Require multiple keyword hits for generic catalog names (reduces passport false positives)
+  if (keywordHits === 1 && nameWords.length >= 2) {
+    score = Math.min(score, 55);
   }
 
   return Math.min(score, 100);
