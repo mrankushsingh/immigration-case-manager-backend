@@ -16,14 +16,21 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** Immigration doc abbreviations (3 chars) — must match as whole words only. */
+const SHORT_DOC_TERMS = new Set(['dni', 'nie', 'tie', 'nif', 'iva']);
+
 /** Whole-word or whole-phrase match (not substring inside another word). */
 export function containsTerm(text: string, term: string): boolean {
   const hay = normalize(text);
   const needle = normalize(term);
   if (!hay || !needle) return false;
 
-  // Ignore very short needles — too many false positives (ex, ir, tie as substring, etc.)
-  if (needle.length < 4) return false;
+  if (needle.length < 4) {
+    if (SHORT_DOC_TERMS.has(needle)) {
+      return new RegExp(`(?:^|\\s)${escapeRegex(needle)}(?:\\s|$)`, 'i').test(hay);
+    }
+    return false;
+  }
 
   if (needle.includes(' ')) {
     const pattern = needle
@@ -53,8 +60,13 @@ const DOC_NAME_STOP_WORDS = new Set([
 
 /** Stems often used in filenames (person name + hint), e.g. "Klodian Penales.pdf". */
 const FILENAME_DOC_STEMS: Array<{ stem: string; inDocName: RegExp }> = [
+  { stem: 'dni', inDocName: /\bdni\b/i },
+  { stem: 'nie', inDocName: /\bnie\b/i },
+  { stem: 'tie', inDocName: /\btie\b/i },
   { stem: 'penales', inDocName: /penales|criminal/i },
   { stem: 'antecedentes', inDocName: /antecedentes/i },
+  { stem: 'designa', inDocName: /designa|abogado/i },
+  { stem: 'abogado', inDocName: /designa|abogado/i },
   { stem: 'pasaporte', inDocName: /pasaporte|passport/i },
   { stem: 'passport', inDocName: /passport|pasaporte/i },
   { stem: 'empadron', inDocName: /empadronamiento|padron/i },
@@ -91,6 +103,15 @@ export function scoreDistinctiveFilenameHint(
   const docNorm = normalize(docName);
   if (!hay || !docNorm) return { score: 0, reason: '' };
 
+  for (const short of SHORT_DOC_TERMS) {
+    if (docNorm.includes(short) && containsTerm(hay, short)) {
+      return {
+        score: 96,
+        reason: `filename contains "${short}" (matches "${docName}")`,
+      };
+    }
+  }
+
   for (const w of significantWords(docName)) {
     if (DOC_NAME_STOP_WORDS.has(w)) continue;
     if (w.length >= 6 && containsTerm(hay, w)) {
@@ -116,6 +137,7 @@ export function scoreDistinctiveFilenameHint(
 export function filenameHasDocumentHint(fileName: string): boolean {
   const hay = filenameBase(fileName);
   if (!hay) return false;
+  if ([...SHORT_DOC_TERMS].some((t) => containsTerm(hay, t))) return true;
   return FILENAME_DOC_STEMS.some(({ stem }) => containsTerm(hay, stem));
 }
 

@@ -53,7 +53,7 @@ const DOCUMENT_TYPE_KEYWORDS: Record<string, string[]> = {
   visa: ['visa', 'visado', 'schengen'],
   tie: ['tie', 'tarjeta de residencia', 'residence card', 'extranjero', 'identidad de extranjero'],
   nie: ['nie', 'certificado de registro', 'ciudadano ue', 'union europea'],
-  dni: ['dni', 'documento nacional de identidad', 'ministerio del interior'],
+  dni: ['dni', 'documento nacional de identidad', 'ministerio del interior', 'copia de dni'],
   empadronamiento: ['empadronamiento', 'padron', 'padrón', 'ayuntamiento'],
   convivencia: ['convivencia', 'cohabitation'],
   criminal_record: ['antecedentes penales', 'criminal record', 'penados', 'penales'],
@@ -215,6 +215,25 @@ function pickBestFromCatalog(
   return best;
 }
 
+function pickBestByClientFilenameHint(
+  fileName: string,
+  requiredDocuments: RequiredDocRef[]
+): MatchCandidate | null {
+  let best: MatchCandidate | null = null;
+  for (const doc of requiredDocuments) {
+    const hint = scoreDistinctiveFilenameHint(fileName, doc.name);
+    if (hint.score >= 85 && (!best || hint.score > best.score)) {
+      best = {
+        doc,
+        score: hint.score,
+        reason: hint.reason,
+        method: 'keywords',
+      };
+    }
+  }
+  return best;
+}
+
 function pickBestMatch(
   fileName: string,
   ocrText: string,
@@ -223,6 +242,7 @@ function pickBestMatch(
 ): MatchCandidate | null {
   let best: MatchCandidate | null = null;
   const vagueName = isVagueFilename(fileName);
+  const filenameHint = pickBestByClientFilenameHint(fileName, requiredDocuments);
 
   const consider = (candidate: MatchCandidate | null) => {
     if (candidate && (!best || candidate.score > best.score)) {
@@ -269,6 +289,14 @@ function pickBestMatch(
           method: 'ocr',
         });
       }
+    }
+  }
+
+  if (filenameHint && filenameHint.score >= 88) {
+    if (!best || filenameHint.score > best.score) {
+      best = filenameHint;
+    } else if (filenameHint.score >= 92 && best!.method !== 'keywords') {
+      best = filenameHint;
     }
   }
 

@@ -8,6 +8,10 @@ import { AuthenticatedRequest } from '../middleware/auth.js';
 import { sanitizeFilename, sanitizeString, sanitizeEmail, sanitizePhone, sanitizeText } from '../utils/sanitize.js';
 import { getSafeErrorMessage } from '../utils/errors.js';
 import { classifyDocument, MIN_CONFIDENCE } from '../utils/documentClassifier.js';
+import {
+  applyFileToRequiredDocAtIndex,
+  resolveRequiredDocTargetIndex,
+} from '../utils/resolveRequiredDoc.js';
 
 const memoryDb = db;
 
@@ -441,33 +445,39 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
         classification.documentCode &&
         classification.confidence >= MIN_CONFIDENCE
       ) {
-        let updatedCount = 0;
-        const updatedDocuments = (client.required_documents || []).map((doc: any) => {
-          if (doc.code === classification.documentCode) {
-            updatedCount += 1;
-            if (doc.fileUrl && doc.fileUrl.startsWith('/uploads/')) {
-              deleteFile(doc.fileUrl).catch((err) => {
-                console.error('Error deleting old file:', err);
-              });
-            }
-            return {
-              ...doc,
-              submitted: true,
-              fileUrl,
-              uploadedAt: new Date().toISOString(),
-              fileName: fileData.filename,
-              fileSize: fileData.size,
-              uploadedBy: userName,
-            };
-          }
-          return doc;
-        });
+        const targetIdx = resolveRequiredDocTargetIndex(
+          requiredDocs,
+          classification,
+          fileData.filename
+        );
 
-        if (updatedCount !== 1) {
-          console.warn(
-            `Smart upload: expected 1 required doc update, got ${updatedCount} for code ${classification.documentCode}`
-          );
+        if (targetIdx < 0) {
+          return reply.status(400).send({
+            error: 'Could not determine which required document slot to use',
+          });
         }
+
+        const targetDoc = requiredDocs[targetIdx];
+        const existing = (client.required_documents || [])[targetIdx] as any;
+        if (existing?.fileUrl?.startsWith('/uploads/')) {
+          deleteFile(existing.fileUrl).catch((err) => {
+            console.error('Error deleting old file:', err);
+          });
+        }
+
+        const updatedDocuments = applyFileToRequiredDocAtIndex(
+          client.required_documents || [],
+          targetIdx,
+          {
+            fileUrl,
+            fileName: fileData.filename,
+            fileSize: fileData.size,
+            uploadedBy: userName,
+          }
+        );
+
+        classification.documentCode = targetDoc.code;
+        classification.documentName = targetDoc.name;
 
         const requiredUpdated = await memoryDb.updateClient(id, {
           required_documents: updatedDocuments,
