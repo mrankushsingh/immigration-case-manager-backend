@@ -883,6 +883,10 @@ class DatabaseAdapter {
 
   async updateClient(id: string, data: Partial<Client>): Promise<Client | null> {
     await this.ensureInitialized();
+    const replacePayments = (data as any).replacePayments === true;
+    if ((data as any).replacePayments !== undefined) {
+      delete (data as any).replacePayments;
+    }
     
     // Special handling for payment updates - merge payments array instead of replacing
     if (data.payment) {
@@ -902,8 +906,10 @@ class DatabaseAdapter {
             return `${p.date || ''}_${p.amount || 0}_${p.method || ''}${p.note ? '_' + p.note : ''}`;
           };
           const existingPaymentIds = new Set(existingPayments.map(getPaymentId));
-          
-          if (newPayments.length > 0) {
+
+          if (replacePayments) {
+            data.payment.payments = newPayments;
+          } else if (newPayments.length > 0) {
             // Check if new payments are actually new (not in existing)
             const trulyNewPayments = newPayments.filter(
               (p: any) => p && typeof p === 'object' && !existingPaymentIds.has(getPaymentId(p))
@@ -930,11 +936,9 @@ class DatabaseAdapter {
               (sum: number, p: any) => sum + (Number(p?.amount) || 0),
               0
             );
-            // Use provided paidAmount if it's higher (might include adjustments), otherwise use calculated
-            data.payment.paidAmount = Math.max(
-              Number(data.payment.paidAmount) || 0,
-              calculatedPaidAmount
-            );
+            data.payment.paidAmount = replacePayments
+              ? calculatedPaidAmount
+              : Math.max(Number(data.payment.paidAmount) || 0, calculatedPaidAmount);
           }
           
           // Merge payment object to preserve other fields like totalFee
@@ -1032,10 +1036,13 @@ class DatabaseAdapter {
       const existingPayments = client.payment.payments || [];
       const newPayments = data.payment.payments || [];
       
-      // If new payments array is provided, check if we need to merge
-      // Only merge if the new payments array has fewer items than existing (likely a partial update)
-      // Otherwise, use the provided payments array (full update from frontend)
-      if (newPayments.length > 0 && newPayments.length < existingPayments.length) {
+      if (replacePayments) {
+        data.payment.payments = newPayments;
+        data.payment.paidAmount = newPayments.reduce(
+          (sum: number, p: any) => sum + (Number(p?.amount) || 0),
+          0
+        );
+      } else if (newPayments.length > 0 && newPayments.length < existingPayments.length) {
         // Merge: keep existing payments and add new ones that don't exist
         const existingPaymentIds = new Set(
           existingPayments.map((p: any) => `${p.date}_${p.amount}_${p.method}`)
@@ -1050,7 +1057,7 @@ class DatabaseAdapter {
       }
       
       // Ensure paidAmount is calculated correctly if not provided
-      if (data.payment.paidAmount === undefined && data.payment.payments) {
+      if (!replacePayments && data.payment.paidAmount === undefined && data.payment.payments) {
         data.payment.paidAmount = data.payment.payments.reduce(
           (sum: number, p: any) => sum + (p.amount || 0),
           0
