@@ -228,6 +228,24 @@ class DatabaseAdapter {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
+
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS appointments (
+          id VARCHAR(255) PRIMARY KEY,
+          title VARCHAR(255) NOT NULL,
+          client_name VARCHAR(255) NOT NULL,
+          client_surname VARCHAR(255),
+          phone VARCHAR(255),
+          email VARCHAR(255),
+          appointment_date TIMESTAMP NOT NULL,
+          duration_minutes INTEGER DEFAULT 30,
+          color VARCHAR(20) NOT NULL DEFAULT 'blue',
+          notes TEXT,
+          source VARCHAR(20) DEFAULT 'manual',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
       
       // Add reminder_type column if it doesn't exist (for existing databases)
       await this.pool.query(`
@@ -385,6 +403,12 @@ class DatabaseAdapter {
       `);
       await this.pool.query(`
         CREATE INDEX IF NOT EXISTS idx_team_tasks_done ON team_tasks(done);
+      `);
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(appointment_date);
+      `);
+      await this.pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_appointments_color ON appointments(color);
       `);
       
       console.log('✅ Database indexes created successfully');
@@ -1708,6 +1732,223 @@ class DatabaseAdapter {
       const filtered = list.filter((r) => r.id !== id);
       if (filtered.length === list.length) return false;
       writeFileSync(teamTasksFile, JSON.stringify(filtered, null, 2), 'utf-8');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private mapAppointmentRow(row: any) {
+    return {
+      id: row.id,
+      title: row.title,
+      client_name: row.client_name,
+      client_surname: row.client_surname ?? undefined,
+      phone: row.phone ?? undefined,
+      email: row.email ?? undefined,
+      appointment_date: row.appointment_date instanceof Date
+        ? row.appointment_date.toISOString()
+        : new Date(row.appointment_date).toISOString(),
+      duration_minutes: row.duration_minutes ?? 30,
+      color: row.color || 'blue',
+      notes: row.notes ?? undefined,
+      source: row.source || 'manual',
+      created_at: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+      updated_at: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+    };
+  }
+
+  async insertAppointment(appointment: {
+    title: string;
+    client_name: string;
+    client_surname?: string;
+    phone?: string;
+    email?: string;
+    appointment_date: string;
+    duration_minutes?: number;
+    color?: string;
+    notes?: string;
+    source?: string;
+  }): Promise<any> {
+    await this.ensureInitialized();
+    const id = `appointment_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const now = new Date().toISOString();
+    const duration = appointment.duration_minutes ?? 30;
+    const color = appointment.color || 'blue';
+    const source = appointment.source || 'manual';
+
+    if (this.usePostgres && this.pool) {
+      await this.pool.query(
+        `INSERT INTO appointments (id, title, client_name, client_surname, phone, email, appointment_date, duration_minutes, color, notes, source, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [
+          id,
+          appointment.title,
+          appointment.client_name,
+          appointment.client_surname || null,
+          appointment.phone || null,
+          appointment.email || null,
+          appointment.appointment_date,
+          duration,
+          color,
+          appointment.notes || null,
+          source,
+          now,
+          now,
+        ]
+      );
+    } else {
+      const appointmentsFile = join(this.dataDir, 'appointments.json');
+      let list: any[] = [];
+      if (existsSync(appointmentsFile)) {
+        try {
+          list = JSON.parse(readFileSync(appointmentsFile, 'utf-8'));
+        } catch {
+          list = [];
+        }
+      }
+      const row = {
+        id,
+        ...appointment,
+        duration_minutes: duration,
+        color,
+        source,
+        created_at: now,
+        updated_at: now,
+      };
+      list.push(row);
+      writeFileSync(appointmentsFile, JSON.stringify(list, null, 2), 'utf-8');
+    }
+
+    return {
+      id,
+      ...appointment,
+      duration_minutes: duration,
+      color,
+      source,
+      created_at: now,
+      updated_at: now,
+    };
+  }
+
+  async getAppointments(filters?: { from?: string; to?: string }): Promise<any[]> {
+    await this.ensureInitialized();
+    if (this.usePostgres && this.pool) {
+      let query = 'SELECT * FROM appointments';
+      const values: string[] = [];
+      const clauses: string[] = [];
+      if (filters?.from) {
+        values.push(filters.from);
+        clauses.push(`appointment_date >= $${values.length}`);
+      }
+      if (filters?.to) {
+        values.push(filters.to);
+        clauses.push(`appointment_date <= $${values.length}`);
+      }
+      if (clauses.length) query += ` WHERE ${clauses.join(' AND ')}`;
+      query += ' ORDER BY appointment_date ASC';
+      const result = await this.pool.query(query, values);
+      return result.rows.map((row) => this.mapAppointmentRow(row));
+    }
+
+    const appointmentsFile = join(this.dataDir, 'appointments.json');
+    if (!existsSync(appointmentsFile)) return [];
+    try {
+      let list: any[] = JSON.parse(readFileSync(appointmentsFile, 'utf-8'));
+      if (filters?.from) {
+        const fromMs = new Date(filters.from).getTime();
+        list = list.filter((a) => new Date(a.appointment_date).getTime() >= fromMs);
+      }
+      if (filters?.to) {
+        const toMs = new Date(filters.to).getTime();
+        list = list.filter((a) => new Date(a.appointment_date).getTime() <= toMs);
+      }
+      return list.sort(
+        (a, b) => new Date(a.appointment_date).getTime() - new Date(b.appointment_date).getTime()
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  async updateAppointment(
+    id: string,
+    patch: {
+      title?: string;
+      client_name?: string;
+      client_surname?: string;
+      phone?: string;
+      email?: string;
+      appointment_date?: string;
+      duration_minutes?: number;
+      color?: string;
+      notes?: string;
+    }
+  ): Promise<any | null> {
+    await this.ensureInitialized();
+    const now = new Date().toISOString();
+
+    if (this.usePostgres && this.pool) {
+      const updates: string[] = ['updated_at = $1'];
+      const values: any[] = [now];
+      let paramIndex = 2;
+
+      const fields: Array<[keyof typeof patch, string]> = [
+        ['title', 'title'],
+        ['client_name', 'client_name'],
+        ['client_surname', 'client_surname'],
+        ['phone', 'phone'],
+        ['email', 'email'],
+        ['appointment_date', 'appointment_date'],
+        ['duration_minutes', 'duration_minutes'],
+        ['color', 'color'],
+        ['notes', 'notes'],
+      ];
+
+      for (const [key, column] of fields) {
+        if (patch[key] !== undefined) {
+          updates.push(`${column} = $${paramIndex++}`);
+          const val = patch[key];
+          values.push(key === 'client_surname' || key === 'phone' || key === 'email' || key === 'notes'
+            ? val || null
+            : val);
+        }
+      }
+
+      values.push(id);
+      const query = `UPDATE appointments SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
+      const result = await this.pool.query(query, values);
+      if (!result.rows.length) return null;
+      return this.mapAppointmentRow(result.rows[0]);
+    }
+
+    const appointmentsFile = join(this.dataDir, 'appointments.json');
+    if (!existsSync(appointmentsFile)) return null;
+    try {
+      const list: any[] = JSON.parse(readFileSync(appointmentsFile, 'utf-8'));
+      const index = list.findIndex((a) => a.id === id);
+      if (index === -1) return null;
+      list[index] = { ...list[index], ...patch, updated_at: now };
+      writeFileSync(appointmentsFile, JSON.stringify(list, null, 2), 'utf-8');
+      return list[index];
+    } catch {
+      return null;
+    }
+  }
+
+  async deleteAppointment(id: string): Promise<boolean> {
+    await this.ensureInitialized();
+    if (this.usePostgres && this.pool) {
+      const result = await this.pool.query('DELETE FROM appointments WHERE id = $1', [id]);
+      return (result.rowCount ?? 0) > 0;
+    }
+    const appointmentsFile = join(this.dataDir, 'appointments.json');
+    if (!existsSync(appointmentsFile)) return false;
+    try {
+      const list: any[] = JSON.parse(readFileSync(appointmentsFile, 'utf-8'));
+      const filtered = list.filter((a) => a.id !== id);
+      if (filtered.length === list.length) return false;
+      writeFileSync(appointmentsFile, JSON.stringify(filtered, null, 2), 'utf-8');
       return true;
     } catch {
       return false;

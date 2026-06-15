@@ -8,6 +8,8 @@ import usersRoutes from './routes/users.js';
 import settingsRoutes from './routes/settings.js';
 import remindersRoutes from './routes/reminders.js';
 import teamTasksRoutes from './routes/teamTasks.js';
+import appointmentsRoutes from './routes/appointments.js';
+import aiAppointmentsRoutes from './routes/aiAppointments.js';
 import analyticsRoutes from './routes/analytics.js';
 import { db } from './utils/database.js';
 import { cache } from './utils/cache.js';
@@ -46,7 +48,7 @@ await fastify.register(cors, {
   origin: corsOriginValue,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-AI-API-Key', 'X-API-Key'],
 });
 
 // Get frontend origin for CSP frame-ancestors
@@ -254,6 +256,9 @@ await fastify.register(async (fastify) => {
 
   // Team tasks (TEAMS TO DO) - general limit
   await fastify.register(teamTasksRoutes, { prefix: '/team-tasks' });
+
+  // Appointments calendar - general limit
+  await fastify.register(appointmentsRoutes, { prefix: '/appointments' });
   
   // Analytics - moderate limit
   await fastify.register(async (fastify) => {
@@ -282,6 +287,13 @@ await fastify.register(async (fastify) => {
     }
   });
 }, { prefix: '/api' });
+
+// AI Appointments API (API key auth, not Firebase)
+await fastify.register(async (fastify) => {
+  await registerRateLimit(fastify, rateLimitConfig.sensitive);
+  await fastify.register(aiAppointmentsRoutes, { prefix: '/appointments' });
+}, { prefix: '/api/ai' });
+fastify.log.info('✅ AI Appointments API enabled at /api/ai/appointments (X-AI-API-Key)');
 
 // 404 handler for undefined API routes
 fastify.setNotFoundHandler(async (request, reply) => {
