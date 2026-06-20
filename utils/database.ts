@@ -11,6 +11,7 @@ interface CaseTemplate {
   required_documents: any[];
   reminder_interval_days: number;
   administrative_silence_days: number;
+  assigned_team_member?: string;
   created_at: string;
   updated_at: string;
 }
@@ -352,6 +353,18 @@ class DatabaseAdapter {
         END $$;
       `);
 
+      await this.pool.query(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'case_templates' AND column_name = 'assigned_team_member'
+          ) THEN
+            ALTER TABLE case_templates ADD COLUMN assigned_team_member VARCHAR(50);
+          END IF;
+        END $$;
+      `);
+
       // Create indexes for performance optimization
       console.log('📊 Creating database indexes for performance...');
       
@@ -551,8 +564,8 @@ class DatabaseAdapter {
 
     if (this.usePostgres && this.pool) {
       await this.pool.query(
-        `INSERT INTO case_templates (id, name, description, required_documents, reminder_interval_days, administrative_silence_days, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        `INSERT INTO case_templates (id, name, description, required_documents, reminder_interval_days, administrative_silence_days, assigned_team_member, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           template.id,
           template.name,
@@ -560,6 +573,7 @@ class DatabaseAdapter {
           JSON.stringify(template.required_documents),
           template.reminder_interval_days,
           template.administrative_silence_days,
+          template.assigned_team_member || null,
           template.created_at,
           template.updated_at,
         ]
@@ -678,6 +692,10 @@ class DatabaseAdapter {
       if (data.administrative_silence_days !== undefined) {
         updates.push(`administrative_silence_days = $${paramCount++}`);
         values.push(data.administrative_silence_days);
+      }
+      if (data.assigned_team_member !== undefined) {
+        updates.push(`assigned_team_member = $${paramCount++}`);
+        values.push(data.assigned_team_member);
       }
 
       updates.push(`updated_at = CURRENT_TIMESTAMP`);

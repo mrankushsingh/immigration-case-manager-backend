@@ -2,13 +2,14 @@ import { FastifyPluginAsync } from 'fastify';
 import { db } from '../utils/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { cache } from '../utils/cache.js';
+import { normalizeAssignedTeamMember } from '../utils/teamMembers.js';
 
 const memoryDb = db;
 
 const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/', async (request: AuthenticatedRequest, reply) => {
     try {
-      const { name, description, requiredDocuments, reminderIntervalDays, administrativeSilenceDays } = request.body as any;
+      const { name, description, requiredDocuments, reminderIntervalDays, administrativeSilenceDays, assignedTeamMember } = request.body as any;
       
       if (!name || typeof name !== 'string' || !name.trim()) {
         return reply.status(400).send({ error: 'Name is required and must be a non-empty string' });
@@ -32,12 +33,21 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ error: 'Required documents must be an array' });
       }
 
+      let assigned_team_member: string | undefined;
+      try {
+        const normalized = normalizeAssignedTeamMember(assignedTeamMember);
+        if (normalized) assigned_team_member = normalized;
+      } catch (err: any) {
+        return reply.status(400).send({ error: err.message || 'Invalid team member' });
+      }
+
       const template = await memoryDb.insertTemplate({
         name: name.trim(),
         description: description?.trim() || undefined,
         required_documents: Array.isArray(requiredDocuments) ? requiredDocuments : [],
         reminder_interval_days: Number(reminderIntervalDays) || 10,
         administrative_silence_days: Number(administrativeSilenceDays) || 60,
+        assigned_team_member,
       });
 
       // Invalidate templates cache
@@ -121,13 +131,20 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.put('/:id', async (request: AuthenticatedRequest, reply) => {
     try {
       const { id } = request.params as { id: string };
-      const { name, description, requiredDocuments, reminderIntervalDays, administrativeSilenceDays } = request.body as any;
+      const { name, description, requiredDocuments, reminderIntervalDays, administrativeSilenceDays, assignedTeamMember } = request.body as any;
       const updateData: any = {};
       if (name !== undefined) updateData.name = name;
       if (description !== undefined) updateData.description = description;
       if (requiredDocuments !== undefined) updateData.required_documents = requiredDocuments;
       if (reminderIntervalDays !== undefined) updateData.reminder_interval_days = reminderIntervalDays;
       if (administrativeSilenceDays !== undefined) updateData.administrative_silence_days = administrativeSilenceDays;
+      if (assignedTeamMember !== undefined) {
+        try {
+          updateData.assigned_team_member = normalizeAssignedTeamMember(assignedTeamMember);
+        } catch (err: any) {
+          return reply.status(400).send({ error: err.message || 'Invalid team member' });
+        }
+      }
       
       const template = await memoryDb.updateTemplate(id, updateData);
       if (!template) return reply.status(404).send({ error: 'Template not found' });
