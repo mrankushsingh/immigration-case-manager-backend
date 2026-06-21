@@ -7,6 +7,7 @@ import { uploadFile, deleteFile, isUsingBucketStorage } from '../utils/storage.j
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { sanitizeFilename, sanitizeString, sanitizeEmail, sanitizePhone, sanitizeText } from '../utils/sanitize.js';
 import { getSafeErrorMessage } from '../utils/errors.js';
+import { parseClientUpdateBody } from '../utils/clientUpdate.js';
 import {
   MAX_SMART_UPLOAD_FILES,
   runSmartUploadBatch,
@@ -327,8 +328,13 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.warn(`Invalid request body for client ${id}`);
         return reply.status(400).send({ error: 'Invalid request body' });
       }
-      
-      const client = await memoryDb.updateClient(id, request.body as any);
+
+      const { data: updateData, error: parseError } = parseClientUpdateBody(request.body);
+      if (parseError) {
+        return reply.status(400).send({ error: parseError });
+      }
+
+      const client = await memoryDb.updateClient(id, updateData as any);
       if (!client) {
         fastify.log.warn(`Client ${id} not found`);
         return reply.status(404).send({ error: 'Client not found' });

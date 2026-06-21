@@ -1,6 +1,5 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import staticFiles from '@fastify/static';
 import helmet from '@fastify/helmet';
 import caseTemplatesRoutes from './routes/caseTemplates.js';
 import clientsRoutes from './routes/clients.js';
@@ -14,7 +13,8 @@ import aiAppointmentsRoutes from './routes/aiAppointments.js';
 import analyticsRoutes from './routes/analytics.js';
 import { db } from './utils/database.js';
 import { cache } from './utils/cache.js';
-import { isUsingBucketStorage, getFileUrl, fileExists } from './utils/storage.js';
+import { isUsingBucketStorage, fileExists } from './utils/storage.js';
+import { handleAuthenticatedUpload } from './utils/uploadServe.js';
 import { initializeFirebaseAdmin } from './utils/firebase.js';
 import { authenticateToken, AuthenticatedRequest } from './middleware/auth.js';
 import { rateLimitConfig, registerRateLimit } from './middleware/rateLimit.js';
@@ -85,98 +85,17 @@ fastify.log.info('✅ Security headers enabled via Helmet');
 // Initialize Firebase Admin SDK
 initializeFirebaseAdmin();
 
-// Serve uploaded files
+// Authenticated upload serving (documents require login)
 const usingBucket = isUsingBucketStorage();
+const uploadsDir = db.getUploadsDir();
 
-if (!usingBucket) {
-  const uploadsDir = db.getUploadsDir();
-  await fastify.register(staticFiles, {
-    root: uploadsDir,
-    prefix: '/uploads/',
-  });
-} else {
-  // Proxy files from Railway bucket
+await fastify.register(async (fastify) => {
+  fastify.addHook('onRequest', authenticateToken);
   fastify.get('/uploads/*', async (request, reply) => {
-    const pathMatch = request.url.match(/^\/uploads\/(.+)$/);
-    if (!pathMatch) {
-      return reply.status(400).send({ error: 'Invalid file path' });
-    }
-    
-    let filename: string;
-    try {
-      filename = decodeURIComponent(pathMatch[1]);
-    } catch (e) {
-      filename = pathMatch[1];
-    }
-    
-    try {
-      let fileUrl = `/uploads/${filename}`;
-      
-      const exists = await fileExists(fileUrl);
-      
-      if (!exists) {
-        fastify.log.error(`❌ File does not exist: ${filename}`);
-        return reply.status(404).send({ 
-          error: 'File not found',
-          filename: filename,
-          requestedUrl: fileUrl,
-          message: 'The requested file does not exist in storage'
-        });
-      }
-      
-      const signedUrl = await getFileUrl(fileUrl, 3600);
-      
-      if (!signedUrl) {
-        fastify.log.error(`❌ Failed to generate signed URL for: ${filename}`);
-        return reply.status(500).send({ 
-          error: 'Failed to generate file access URL',
-          filename: filename,
-          message: 'Could not create access URL for the file'
-        });
-      }
-      
-      if (signedUrl.startsWith('http')) {
-        const response = await fetch(signedUrl);
-        
-        if (response.ok) {
-          const buffer = await response.arrayBuffer();
-          const contentType = response.headers.get('Content-Type') || 'application/octet-stream';
-          
-          reply.header('Access-Control-Allow-Origin', '*');
-          reply.header('Access-Control-Allow-Methods', 'GET');
-          reply.type(contentType);
-          reply.header('Content-Disposition', `inline; filename="${filename}"`);
-          
-          return reply.send(Buffer.from(buffer));
-        } else {
-          fastify.log.error(`❌ Failed to fetch file from bucket: ${response.status} ${response.statusText}`);
-          return reply.status(404).send({ error: 'File not found in bucket' });
-        }
-      } else {
-        const response = await fetch(signedUrl);
-        if (response.ok) {
-          const buffer = await response.arrayBuffer();
-          const contentType = response.headers.get('Content-Type') || 'application/octet-stream';
-          
-          reply.header('Access-Control-Allow-Origin', '*');
-          reply.header('Access-Control-Allow-Methods', 'GET');
-          reply.type(contentType);
-          
-          return reply.send(Buffer.from(buffer));
-        } else {
-          fastify.log.error(`❌ Fallback fetch failed: ${response.status} ${response.statusText}`);
-          return reply.status(404).send({ error: 'File not found' });
-        }
-      }
-    } catch (error: any) {
-      fastify.log.error(`❌ Error serving file ${filename}: ${error.message}`);
-      return reply.status(500).send({ 
-        error: 'Failed to serve file',
-        details: error.message 
-      });
-    }
+    return handleAuthenticatedUpload(request, reply, { uploadsDir, usingBucket });
   });
-}
+});
+fastify.log.info('🔒 Upload routes secured with authentication');
 
 // Public routes (no authentication required)
 fastify.get('/health', async (request, reply) => {
