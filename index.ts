@@ -8,6 +8,7 @@ import usersRoutes from './routes/users.js';
 import settingsRoutes from './routes/settings.js';
 import remindersRoutes from './routes/reminders.js';
 import teamTasksRoutes from './routes/teamTasks.js';
+import teamMembersRoutes from './routes/teamMembers.js';
 import appointmentsRoutes from './routes/appointments.js';
 import aiAppointmentsRoutes from './routes/aiAppointments.js';
 import analyticsRoutes from './routes/analytics.js';
@@ -256,6 +257,7 @@ await fastify.register(async (fastify) => {
 
   // Team tasks (TEAMS TO DO) - general limit
   await fastify.register(teamTasksRoutes, { prefix: '/team-tasks' });
+  await fastify.register(teamMembersRoutes, { prefix: '/team-members' });
 
   // Appointments calendar - general limit
   await fastify.register(appointmentsRoutes, { prefix: '/appointments' });

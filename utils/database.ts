@@ -4,6 +4,8 @@ import { fileURLToPath } from 'url';
 import pg from 'pg';
 const { Pool } = pg;
 
+import { parseTeamMembersSetting, TEAM_MEMBERS_SETTINGS_KEY } from './teamMembers.js';
+
 interface CaseTemplate {
   id: string;
   name: string;
@@ -1438,6 +1440,39 @@ class DatabaseAdapter {
       settings[key] = value;
       writeFileSync(settingsFile, JSON.stringify(settings, null, 2), 'utf-8');
     }
+  }
+
+  async getTeamMembers(): Promise<string[]> {
+    const raw = await this.getSetting(TEAM_MEMBERS_SETTINGS_KEY);
+    return parseTeamMembersSetting(raw);
+  }
+
+  async setTeamMembers(members: string[]): Promise<void> {
+    await this.setSetting(TEAM_MEMBERS_SETTINGS_KEY, JSON.stringify(members));
+  }
+
+  async clearTemplateAssignmentsForMember(member: string): Promise<void> {
+    await this.ensureInitialized();
+    const normalized = member.trim().toUpperCase();
+    if (this.usePostgres && this.pool) {
+      await this.pool.query(
+        `UPDATE case_templates SET assigned_team_member = NULL, updated_at = CURRENT_TIMESTAMP WHERE assigned_team_member = $1`,
+        [normalized]
+      );
+      return;
+    }
+    let changed = false;
+    for (const [id, template] of this.templates.entries()) {
+      if (template.assigned_team_member?.toUpperCase() === normalized) {
+        this.templates.set(id, {
+          ...template,
+          assigned_team_member: undefined,
+          updated_at: new Date().toISOString(),
+        });
+        changed = true;
+      }
+    }
+    if (changed) this.saveTemplates();
   }
 
   // Reminders methods

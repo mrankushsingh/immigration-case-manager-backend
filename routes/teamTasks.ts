@@ -1,12 +1,14 @@
 import { FastifyPluginAsync } from 'fastify';
 import { db } from '../utils/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
+import { normalizeMemberInput, isAllowedTeamMember } from '../utils/teamMembers.js';
 
-const ALLOWED_MEMBERS = new Set(['YONA', 'LEDJANA', 'CAROLINA', 'MILAGROS', 'YUSTI']);
+const memoryDb = db;
 
-function normalizeMember(raw: string): string | null {
-  const u = String(raw || '').trim().toUpperCase();
-  return ALLOWED_MEMBERS.has(u) ? u : null;
+async function normalizeMember(raw: string): Promise<string | null> {
+  const allowed = await memoryDb.getTeamMembers();
+  const u = normalizeMemberInput(raw || '');
+  return isAllowedTeamMember(u, allowed) ? u : null;
 }
 
 function formatTimestamp(v: unknown): string {
@@ -45,12 +47,13 @@ const teamTasksRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       const body = request.body as { teamMember?: string; team_member?: string; title?: string; notes?: string };
       const memberRaw = body.teamMember ?? body.team_member;
-      const member = normalizeMember(memberRaw || '');
+      const member = await normalizeMember(memberRaw || '');
       const title = typeof body.title === 'string' ? body.title.trim() : '';
 
       if (!member) {
+        const allowed = await db.getTeamMembers();
         return reply.status(400).send({
-          error: 'Invalid teamMember. Must be one of: YONA, LEDJANA, CAROLINA, MILAGROS, YUSTI',
+          error: `Invalid teamMember. Must be one of: ${allowed.join(', ')}`,
         });
       }
       if (!title) {

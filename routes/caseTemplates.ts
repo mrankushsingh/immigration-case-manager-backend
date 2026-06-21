@@ -35,7 +35,8 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
 
       let assigned_team_member: string | undefined;
       try {
-        const normalized = normalizeAssignedTeamMember(assignedTeamMember);
+        const allowed = await memoryDb.getTeamMembers();
+        const normalized = normalizeAssignedTeamMember(assignedTeamMember, allowed);
         if (normalized) assigned_team_member = normalized;
       } catch (err: any) {
         return reply.status(400).send({ error: err.message || 'Invalid team member' });
@@ -140,7 +141,8 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
       if (administrativeSilenceDays !== undefined) updateData.administrative_silence_days = administrativeSilenceDays;
       if (assignedTeamMember !== undefined) {
         try {
-          updateData.assigned_team_member = normalizeAssignedTeamMember(assignedTeamMember);
+          const allowed = await memoryDb.getTeamMembers();
+          updateData.assigned_team_member = normalizeAssignedTeamMember(assignedTeamMember, allowed);
         } catch (err: any) {
           return reply.status(400).send({ error: err.message || 'Invalid team member' });
         }
