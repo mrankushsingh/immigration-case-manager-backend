@@ -38,14 +38,33 @@ export function sanitizePhone(phone: string | null | undefined): string {
 }
 
 /**
- * Sanitize text area (allows newlines but escapes HTML)
+ * Sanitize text area (strip HTML tags; preserve plain text including / in dates).
+ * React escapes on render — no need to entity-encode slashes.
  */
 export function sanitizeText(text: string | null | undefined): string {
   if (!text || typeof text !== 'string') {
     return '';
   }
-  // Escape HTML but preserve newlines
-  return validator.escape(validator.trim(text));
+  return validator.trim(text).replace(/<[^>]*>/g, '');
+}
+
+/** Reverse validator.escape-style entities in stored notes (legacy data). */
+export function decodeHtmlEntities(input: string): string {
+  if (!input) return input;
+  return input
+    .replace(/&#x2F;/gi, '/')
+    .replace(/&#47;/g, '/')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/gi, "'");
+}
+
+export function normalizeStoredText(text: string | null | undefined): string | undefined {
+  if (text == null || text === '') return text === '' ? '' : undefined;
+  return decodeHtmlEntities(String(text));
 }
 
 /**

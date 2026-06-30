@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from '
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import pg from 'pg';
+import { normalizeStoredText } from './sanitize.js';
 const { Pool } = pg;
 
 import { parseTeamMembersSetting, TEAM_MEMBERS_SETTINGS_KEY } from './teamMembers.js';
@@ -801,7 +802,9 @@ class DatabaseAdapter {
       const result = await this.pool.query('SELECT * FROM clients ORDER BY created_at DESC');
       return result.rows.map((row: any) => this.parseClientRow(row));
     }
-    return Array.from(this.clients.values()).sort(
+    return Array.from(this.clients.values())
+      .map((c) => this.normalizeClientTextFields(c))
+      .sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
   }
@@ -874,7 +877,8 @@ class DatabaseAdapter {
       if (result.rows.length === 0) return null;
       return this.parseClientRow(result.rows[0]);
     }
-    return this.clients.get(id) || null;
+    const client = this.clients.get(id);
+    return client ? this.normalizeClientTextFields(client) : null;
   }
 
   /**
@@ -900,8 +904,16 @@ class DatabaseAdapter {
     return defaultValue;
   }
 
-  private parseClientRow(row: any): Client {
+  private normalizeClientTextFields(client: Client): Client {
     return {
+      ...client,
+      details: normalizeStoredText(client.details) ?? client.details,
+      notes: normalizeStoredText(client.notes) ?? client.notes,
+    };
+  }
+
+  private parseClientRow(row: any): Client {
+    return this.normalizeClientTextFields({
       ...row,
       required_documents: this.safeParseJson(row.required_documents, []),
       payment: this.safeParseJson(row.payment, {}),
@@ -922,7 +934,7 @@ class DatabaseAdapter {
       custom_reminder_date: row.custom_reminder_date ? row.custom_reminder_date.toISOString() : undefined,
       created_at: row.created_at.toISOString(),
       updated_at: row.updated_at.toISOString(),
-    };
+    });
   }
 
   async updateClient(id: string, data: Partial<Client>): Promise<Client | null> {
@@ -1119,7 +1131,7 @@ class DatabaseAdapter {
     const updated = { ...client, ...data, updated_at: new Date().toISOString() };
     this.clients.set(id, updated);
     this.saveClients();
-    return updated;
+    return this.normalizeClientTextFields(updated);
   }
 
   async deleteClient(id: string): Promise<boolean> {
