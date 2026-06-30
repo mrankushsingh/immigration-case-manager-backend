@@ -3,6 +3,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import pg from 'pg';
 import { normalizeStoredText } from './sanitize.js';
+import { sumPaidPaymentAmount } from './paymentTotals.js';
 const { Pool } = pg;
 
 import { parseTeamMembersSetting, TEAM_MEMBERS_SETTINGS_KEY } from './teamMembers.js';
@@ -988,10 +989,7 @@ class DatabaseAdapter {
           // Ensure paidAmount is calculated correctly from all payments
           const finalPayments = data.payment.payments || existingPayments;
           if (Array.isArray(finalPayments)) {
-            const calculatedPaidAmount = finalPayments.reduce(
-              (sum: number, p: any) => sum + (Number(p?.amount) || 0),
-              0
-            );
+            const calculatedPaidAmount = sumPaidPaymentAmount(finalPayments);
             data.payment.paidAmount = replacePayments
               ? calculatedPaidAmount
               : Math.max(Number(data.payment.paidAmount) || 0, calculatedPaidAmount);
@@ -1009,10 +1007,7 @@ class DatabaseAdapter {
             data.payment.payments = [];
           }
           if (!data.payment.paidAmount && Array.isArray(data.payment.payments)) {
-            data.payment.paidAmount = data.payment.payments.reduce(
-              (sum: number, p: any) => sum + (Number(p?.amount) || 0),
-              0
-            );
+            data.payment.paidAmount = sumPaidPaymentAmount(data.payment.payments);
           }
         }
       } catch (error: any) {
@@ -1094,10 +1089,7 @@ class DatabaseAdapter {
       
       if (replacePayments) {
         data.payment.payments = newPayments;
-        data.payment.paidAmount = newPayments.reduce(
-          (sum: number, p: any) => sum + (Number(p?.amount) || 0),
-          0
-        );
+        data.payment.paidAmount = sumPaidPaymentAmount(newPayments);
       } else if (newPayments.length > 0 && newPayments.length < existingPayments.length) {
         // Merge: keep existing payments and add new ones that don't exist
         const existingPaymentIds = new Set(
@@ -1114,10 +1106,7 @@ class DatabaseAdapter {
       
       // Ensure paidAmount is calculated correctly if not provided
       if (!replacePayments && data.payment.paidAmount === undefined && data.payment.payments) {
-        data.payment.paidAmount = data.payment.payments.reduce(
-          (sum: number, p: any) => sum + (p.amount || 0),
-          0
-        );
+            data.payment.paidAmount = sumPaidPaymentAmount(data.payment.payments);
       }
       
       // Merge payment object to preserve other fields like totalFee
