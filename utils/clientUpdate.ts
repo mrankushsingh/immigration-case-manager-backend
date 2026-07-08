@@ -3,6 +3,7 @@ import { sanitizeString, sanitizeEmail, sanitizePhone, sanitizeText } from './sa
 const ALLOWED_FIELDS = new Set([
   'first_name',
   'last_name',
+  'file_name',
   'parent_name',
   'email',
   'phone',
@@ -35,6 +36,7 @@ const ALLOWED_FIELDS = new Set([
 const CAMEL_TO_SNAKE: Record<string, string> = {
   firstName: 'first_name',
   lastName: 'last_name',
+  fileName: 'file_name',
   parentName: 'parent_name',
   caseTemplateId: 'case_template_id',
   caseType: 'case_type',
@@ -145,6 +147,11 @@ export function parseClientUpdateBody(raw: unknown): { data: Record<string, unkn
       const last = sanitizeString(String(normalized.last_name));
       if (!last) return { data: {}, error: 'Last name must be a non-empty string' };
       data.last_name = last;
+    }
+    if (normalized.file_name !== undefined) {
+      const fileName = sanitizeString(String(normalized.file_name));
+      if (!fileName) return { data: {}, error: 'File name must be a non-empty string' };
+      data.file_name = fileName;
     }
     if (normalized.parent_name !== undefined) {
       data.parent_name = optionalNullableString(normalized.parent_name, sanitizeString);

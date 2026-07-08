@@ -24,6 +24,7 @@ interface Client {
   id: string;
   first_name: string;
   last_name: string;
+  file_name?: string;
   parent_name?: string;
   email?: string;
   phone?: string;
@@ -154,6 +155,7 @@ class DatabaseAdapter {
           id VARCHAR(255) PRIMARY KEY,
           first_name VARCHAR(255) NOT NULL,
           last_name VARCHAR(255) NOT NULL,
+          file_name VARCHAR(255),
           parent_name VARCHAR(255),
           email VARCHAR(255),
           phone VARCHAR(255),
@@ -353,6 +355,12 @@ class DatabaseAdapter {
             WHERE table_name = 'clients' AND column_name = 'recurso_in_appeals_box'
           ) THEN
             ALTER TABLE clients ADD COLUMN recurso_in_appeals_box BOOLEAN DEFAULT FALSE;
+          END IF;
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'clients' AND column_name = 'file_name'
+          ) THEN
+            ALTER TABLE clients ADD COLUMN file_name VARCHAR(255);
           END IF;
         END $$;
       `);
@@ -749,17 +757,18 @@ class DatabaseAdapter {
 
     if (this.usePostgres && this.pool) {
       await this.pool.query(
-        `INSERT INTO clients (id, first_name, last_name, parent_name, email, phone, case_template_id, case_type, details,
+        `INSERT INTO clients (id, first_name, last_name, file_name, parent_name, email, phone, case_template_id, case_type, details,
          required_documents, reminder_interval_days, administrative_silence_days, payment, 
          submitted_to_immigration, application_date, custom_reminder_date, notifications, additional_docs_required, 
          notes, additional_documents, requested_documents,          requested_documents_reminder_duration_days, 
          requested_documents_reminder_interval_days, requested_documents_last_reminder_date, 
          aportar_documentacion, requerimiento, resolucion, justificante_presentacion, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)`,
         [
           client.id,
           client.first_name,
           client.last_name,
+          client.file_name || null,
           client.parent_name || null,
           client.email || null,
           client.phone || null,
@@ -823,6 +832,7 @@ class DatabaseAdapter {
         const whereClause = `WHERE 
           LOWER(first_name) LIKE $${paramCount} OR
           LOWER(last_name) LIKE $${paramCount} OR
+          LOWER(COALESCE(file_name, '')) LIKE $${paramCount} OR
           LOWER(first_name || ' ' || last_name) LIKE $${paramCount} OR
           LOWER(email) LIKE $${paramCount} OR
           LOWER(phone) LIKE $${paramCount} OR
@@ -854,6 +864,7 @@ class DatabaseAdapter {
       allClients = allClients.filter((client) => {
         const firstName = (client.first_name || '').toLowerCase();
         const lastName = (client.last_name || '').toLowerCase();
+        const fileName = (client.file_name || '').toLowerCase();
         const fullName = `${firstName} ${lastName}`.trim();
         const email = (client.email || '').toLowerCase();
         const phone = (client.phone || '').toLowerCase();
@@ -863,6 +874,7 @@ class DatabaseAdapter {
         return (
           firstName.includes(query) ||
           lastName.includes(query) ||
+          fileName.includes(query) ||
           fullName.includes(query) ||
           email.includes(query) ||
           phone.includes(query) ||
@@ -1035,6 +1047,7 @@ class DatabaseAdapter {
       const fields: { [key: string]: any } = {
         first_name: data.first_name,
         last_name: data.last_name,
+        file_name: data.file_name,
         parent_name: data.parent_name,
         email: data.email,
         phone: data.phone,
