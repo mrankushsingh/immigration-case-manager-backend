@@ -821,6 +821,8 @@ class DatabaseAdapter {
       if (search && search.trim()) {
         const searchTerm = `%${search.trim().toLowerCase()}%`;
         const whereClause = `WHERE 
+          LOWER(first_name) LIKE $${paramCount} OR
+          LOWER(last_name) LIKE $${paramCount} OR
           LOWER(first_name || ' ' || last_name) LIKE $${paramCount} OR
           LOWER(email) LIKE $${paramCount} OR
           LOWER(phone) LIKE $${paramCount} OR
@@ -850,13 +852,17 @@ class DatabaseAdapter {
     if (search && search.trim()) {
       const query = search.trim().toLowerCase();
       allClients = allClients.filter((client) => {
-        const fullName = `${client.first_name} ${client.last_name}`.toLowerCase();
+        const firstName = (client.first_name || '').toLowerCase();
+        const lastName = (client.last_name || '').toLowerCase();
+        const fullName = `${firstName} ${lastName}`.trim();
         const email = (client.email || '').toLowerCase();
         const phone = (client.phone || '').toLowerCase();
         const caseType = (client.case_type || '').toLowerCase();
         const parentName = (client.parent_name || '').toLowerCase();
         
         return (
+          firstName.includes(query) ||
+          lastName.includes(query) ||
           fullName.includes(query) ||
           email.includes(query) ||
           phone.includes(query) ||
