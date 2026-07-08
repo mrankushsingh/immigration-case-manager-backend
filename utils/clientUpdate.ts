@@ -149,9 +149,7 @@ export function parseClientUpdateBody(raw: unknown): { data: Record<string, unkn
       data.last_name = last;
     }
     if (normalized.file_name !== undefined) {
-      const fileName = sanitizeString(String(normalized.file_name));
-      if (!fileName) return { data: {}, error: 'File name must be a non-empty string' };
-      data.file_name = fileName;
+      data.file_name = optionalNullableString(normalized.file_name, sanitizeString);
     }
     if (normalized.parent_name !== undefined) {
       data.parent_name = optionalNullableString(normalized.parent_name, sanitizeString);

@@ -177,7 +177,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       // Sanitize all string inputs to prevent XSS
       const sanitizedFirstName = sanitizeString(firstName);
       const sanitizedLastName = sanitizeString(lastName);
-      const sanitizedFileName = sanitizeString(fileName);
+      const sanitizedFileName = fileName ? sanitizeString(fileName) : '';
       const sanitizedParentName = parentName ? sanitizeString(parentName) : null;
       const sanitizedEmail = email ? sanitizeEmail(email) : null;
       const sanitizedPhone = phone ? sanitizePhone(phone) : null;
@@ -191,9 +191,6 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ error: 'Last name is required and must be a non-empty string' });
       }
 
-      if (!sanitizedFileName || sanitizedFileName.length === 0) {
-        return reply.status(400).send({ error: 'File name is required and must be a non-empty string' });
-      }
       if (sanitizedEmail && sanitizedEmail.length > 0) {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(sanitizedEmail)) {
@@ -233,7 +230,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       const client = await memoryDb.insertClient({
         first_name: sanitizedFirstName,
         last_name: sanitizedLastName,
-        file_name: sanitizedFileName,
+        file_name: sanitizedFileName || undefined,
         parent_name: sanitizedParentName || undefined,
         email: sanitizedEmail || undefined,
         phone: sanitizedPhone || undefined,
