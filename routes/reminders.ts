@@ -1,8 +1,21 @@
 import { FastifyPluginAsync } from 'fastify';
 import { db } from '../utils/database.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
+import { normalizeAssignedTeamMember } from '../utils/teamMembers.js';
 
 const memoryDb = db;
+
+async function resolveTeamMemberField(
+  raw: unknown,
+  allowed: readonly string[]
+): Promise<{ value?: string | null; error?: string }> {
+  if (raw === undefined) return {};
+  try {
+    return { value: normalizeAssignedTeamMember(raw, allowed) ?? null };
+  } catch (error: any) {
+    return { error: error.message || 'Invalid team member' };
+  }
+}
 
 const remindersRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/', async (request: AuthenticatedRequest, reply) => {
@@ -16,10 +29,18 @@ const remindersRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post('/', async (request: AuthenticatedRequest, reply) => {
     try {
-      const { client_id, client_name, client_surname, phone, reminder_date, notes, reminder_type } = request.body as any;
+      const body = request.body as any;
+      const { client_id, client_name, client_surname, phone, reminder_date, notes, reminder_type } = body;
+      const rawTeamMember = body.team_member ?? body.teamMember;
 
       if (!client_name || !client_surname || !reminder_date) {
         return reply.status(400).send({ error: 'client_name, client_surname, and reminder_date are required' });
+      }
+
+      const allowed = await memoryDb.getTeamMembers();
+      const teamMemberResult = await resolveTeamMemberField(rawTeamMember, allowed);
+      if (teamMemberResult.error) {
+        return reply.status(400).send({ error: teamMemberResult.error });
       }
 
       const reminder = await memoryDb.insertReminder({
@@ -30,6 +51,7 @@ const remindersRoutes: FastifyPluginAsync = async (fastify) => {
         reminder_date,
         notes,
         reminder_type,
+        team_member: teamMemberResult.value,
       });
 
       return reply.status(201).send(reminder);
@@ -41,7 +63,15 @@ const remindersRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.put('/:id', async (request: AuthenticatedRequest, reply) => {
     try {
       const { id } = request.params as { id: string };
-      const { client_id, client_name, client_surname, phone, reminder_date, notes, reminder_type } = request.body as any;
+      const body = request.body as any;
+      const { client_id, client_name, client_surname, phone, reminder_date, notes, reminder_type } = body;
+      const rawTeamMember = body.team_member ?? body.teamMember;
+
+      const allowed = await memoryDb.getTeamMembers();
+      const teamMemberResult = await resolveTeamMemberField(rawTeamMember, allowed);
+      if (teamMemberResult.error) {
+        return reply.status(400).send({ error: teamMemberResult.error });
+      }
 
       const updated = await memoryDb.updateReminder(id, {
         client_id,
@@ -51,6 +81,7 @@ const remindersRoutes: FastifyPluginAsync = async (fastify) => {
         reminder_date,
         notes,
         reminder_type,
+        ...(rawTeamMember !== undefined ? { team_member: teamMemberResult.value ?? null } : {}),
       });
 
       if (!updated) {

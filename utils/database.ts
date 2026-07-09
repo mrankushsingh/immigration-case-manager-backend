@@ -267,6 +267,19 @@ class DatabaseAdapter {
         END $$;
       `);
       
+      // Add team_member column for reminder assignment
+      await this.pool.query(`
+        DO $$ 
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_name = 'reminders' AND column_name = 'team_member'
+          ) THEN
+            ALTER TABLE reminders ADD COLUMN team_member VARCHAR(50);
+          END IF;
+        END $$;
+      `);
+      
       // Add migration to make client_id nullable if it exists as NOT NULL
       await this.pool.query(`
         DO $$ 
@@ -1495,6 +1508,34 @@ class DatabaseAdapter {
     if (changed) this.saveTemplates();
   }
 
+  async clearReminderAssignmentsForMember(member: string): Promise<void> {
+    await this.ensureInitialized();
+    const normalized = member.trim().toUpperCase();
+    if (this.usePostgres && this.pool) {
+      await this.pool.query(
+        `UPDATE reminders SET team_member = NULL, updated_at = CURRENT_TIMESTAMP WHERE team_member = $1`,
+        [normalized]
+      );
+      return;
+    }
+    const remindersFile = join(this.dataDir, 'reminders.json');
+    if (!existsSync(remindersFile)) return;
+    try {
+      const reminders = JSON.parse(readFileSync(remindersFile, 'utf-8'));
+      let changed = false;
+      const updated = reminders.map((reminder: any) => {
+        if (String(reminder.team_member || '').toUpperCase() !== normalized) return reminder;
+        changed = true;
+        return { ...reminder, team_member: null, updated_at: new Date().toISOString() };
+      });
+      if (changed) {
+        writeFileSync(remindersFile, JSON.stringify(updated, null, 2), 'utf-8');
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   // Reminders methods
   async insertReminder(reminder: {
     client_id?: string;
@@ -1504,6 +1545,7 @@ class DatabaseAdapter {
     reminder_date: string;
     notes?: string;
     reminder_type?: string;
+    team_member?: string | null;
   }): Promise<any> {
     await this.ensureInitialized();
     const id = `reminder_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -1511,8 +1553,8 @@ class DatabaseAdapter {
 
     if (this.usePostgres && this.pool) {
       await this.pool.query(
-        `INSERT INTO reminders (id, client_id, client_name, client_surname, phone, reminder_date, notes, reminder_type, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        `INSERT INTO reminders (id, client_id, client_name, client_surname, phone, reminder_date, notes, reminder_type, team_member, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           id,
           reminder.client_id || null,
@@ -1522,6 +1564,7 @@ class DatabaseAdapter {
           reminder.reminder_date,
           reminder.notes || null,
           reminder.reminder_type || null,
+          reminder.team_member || null,
           now,
           now,
         ]
@@ -1579,6 +1622,7 @@ class DatabaseAdapter {
     reminder_date?: string;
     notes?: string;
     reminder_type?: string;
+    team_member?: string | null;
   }): Promise<boolean> {
     await this.ensureInitialized();
     const now = new Date().toISOString();
@@ -1615,6 +1659,10 @@ class DatabaseAdapter {
       if (reminder.reminder_type !== undefined) {
         updates.push(`reminder_type = $${paramIndex++}`);
         values.push(reminder.reminder_type || null);
+      }
+      if (reminder.team_member !== undefined) {
+        updates.push(`team_member = $${paramIndex++}`);
+        values.push(reminder.team_member || null);
       }
 
       updates.push(`updated_at = $${paramIndex++}`);

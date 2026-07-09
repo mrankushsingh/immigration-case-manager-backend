@@ -55,6 +55,7 @@ const teamMembersRoutes: FastifyPluginAsync = async (fastify) => {
       const updated = members.filter((m) => m !== member);
       await db.setTeamMembers(updated);
       await db.clearTemplateAssignmentsForMember(member);
+      await db.clearReminderAssignmentsForMember(member);
       await cache.delete('templates:all');
 
       return reply.send({ members: updated });
