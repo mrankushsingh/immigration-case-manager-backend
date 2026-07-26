@@ -66,6 +66,7 @@ const remindersRoutes: FastifyPluginAsync = async (fastify) => {
       const body = request.body as any;
       const { client_id, client_name, client_surname, phone, reminder_date, notes, reminder_type } = body;
       const rawTeamMember = body.team_member ?? body.teamMember;
+      const rawDone = body.done;
 
       const allowed = await memoryDb.getTeamMembers();
       const teamMemberResult = await resolveTeamMemberField(rawTeamMember, allowed);
@@ -82,6 +83,7 @@ const remindersRoutes: FastifyPluginAsync = async (fastify) => {
         notes,
         reminder_type,
         ...(rawTeamMember !== undefined ? { team_member: teamMemberResult.value ?? null } : {}),
+        ...(rawDone !== undefined ? { done: Boolean(rawDone) } : {}),
       });
 
       if (!updated) {
