@@ -1,12 +1,91 @@
-import { FastifyPluginAsync } from 'fastify';
+import { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import multipart from '@fastify/multipart';
+import { extname } from 'path';
+import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import { db } from '../utils/database.js';
-import { AuthenticatedRequest } from '../middleware/auth.js';
 import { cache } from '../utils/cache.js';
 import { normalizeAssignedTeamMember } from '../utils/teamMembers.js';
+import { uploadFile, deleteFile, isUsingBucketStorage } from '../utils/storage.js';
+import { sanitizeFilename } from '../utils/sanitize.js';
+import { AuthenticatedRequest } from '../middleware/auth.js';
 
 const memoryDb = db;
 
+const ALLOWED_MIME_TYPES = [
+  'application/pdf',
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/gif',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+];
+
+const MULTIPART_PARTS_LIMITS = { fileSize: 50 * 1024 * 1024 };
+
+async function processFile(
+  request: FastifyRequest,
+  fieldName: string = 'file'
+): Promise<{ buffer: Buffer; filename: string; mimetype: string; size: number } | null> {
+  try {
+    if (!request.isMultipart()) return null;
+    const parts = request.parts({ limits: MULTIPART_PARTS_LIMITS });
+    for await (const part of parts) {
+      if (part.type === 'file') {
+        const file = part as any;
+        if (fieldName && file.fieldname && file.fieldname !== fieldName) {
+          try {
+            await file.toBuffer();
+          } catch {
+            /* consume */
+          }
+          continue;
+        }
+        if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+          throw new Error(`File type ${file.mimetype} is not allowed. Allowed types: PDF, images, Word, Excel`);
+        }
+        const buffer = await file.toBuffer();
+        return {
+          buffer,
+          filename: file.filename || 'unknown',
+          mimetype: file.mimetype,
+          size: buffer.length,
+        };
+      }
+    }
+    return null;
+  } catch (error: any) {
+    if (error.message && error.message.includes('File type')) throw error;
+    if (error.message && error.message.includes('file size')) {
+      throw new Error('File size exceeds 50MB limit');
+    }
+    return null;
+  }
+}
+
+function saveFileLocally(buffer: Buffer, originalName: string): string {
+  const uploadsDir = memoryDb.getUploadsDir();
+  if (!existsSync(uploadsDir)) {
+    mkdirSync(uploadsDir, { recursive: true });
+  }
+  const sanitizedName = sanitizeFilename(originalName);
+  const uniqueSuffix = `${Date.now()}_${Math.round(Math.random() * 1E9)}`;
+  const ext = extname(sanitizedName);
+  const name = sanitizedName.replace(ext, '').replace(/[^a-zA-Z0-9]/g, '_');
+  const fileName = `${name}_${uniqueSuffix}${ext}`;
+  writeFileSync(`${uploadsDir}/${fileName}`, buffer);
+  return `/uploads/${fileName}`;
+}
+
 const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
+  await fastify.register(multipart, {
+    limits: MULTIPART_PARTS_LIMITS,
+    attachFieldsToBody: false,
+    throwFileSizeLimit: false,
+  });
+
   fastify.post('/', async (request: AuthenticatedRequest, reply) => {
     try {
       const { name, description, requiredDocuments, reminderIntervalDays, administrativeSilenceDays, assignedTeamMember } = request.body as any;
@@ -250,6 +329,112 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({ message: 'Template deleted successfully' });
     } catch (error: any) {
       return reply.status(500).send({ error: error.message || 'Failed to delete template' });
+    }
+  });
+
+  // Upload a sample/reference file for a required document on a template
+  fastify.post('/:id/documents/:documentCode/upload', async (request: AuthenticatedRequest, reply) => {
+    try {
+      const { id, documentCode } = request.params as { id: string; documentCode: string };
+      const fileData = await processFile(request);
+      if (!fileData) {
+        return reply.status(400).send({ error: 'No file uploaded or file upload failed' });
+      }
+
+      const template = await memoryDb.getTemplate(id);
+      if (!template) {
+        return reply.status(404).send({ error: 'Template not found' });
+      }
+
+      const docs = Array.isArray(template.required_documents) ? [...template.required_documents] : [];
+      const docIndex = docs.findIndex((doc: any) => doc.code === documentCode);
+      if (docIndex === -1) {
+        return reply.status(404).send({ error: 'Document not found on this template' });
+      }
+
+      let storedName: string;
+      let fileUrl: string;
+      if (isUsingBucketStorage()) {
+        const uniqueSuffix = `${Date.now()}_${Math.round(Math.random() * 1E9)}`;
+        const ext = extname(fileData.filename);
+        const name = fileData.filename.replace(ext, '').replace(/[^a-zA-Z0-9]/g, '_');
+        storedName = `templates/${id}/${name}_${uniqueSuffix}${ext}`;
+        fileUrl = await uploadFile(fileData.buffer, storedName, fileData.mimetype);
+      } else {
+        fileUrl = saveFileLocally(fileData.buffer, fileData.filename);
+        storedName = fileUrl.replace('/uploads/', '');
+      }
+
+      const previous = docs[docIndex] as any;
+      if (previous?.fileUrl && String(previous.fileUrl).startsWith('/uploads/')) {
+        deleteFile(previous.fileUrl).catch((err) => {
+          console.error('Error deleting old template document file:', err);
+        });
+      }
+
+      docs[docIndex] = {
+        ...previous,
+        fileUrl,
+        fileName: fileData.filename,
+        fileSize: fileData.size,
+        uploadedAt: new Date().toISOString(),
+      };
+
+      const updated = await memoryDb.updateTemplate(id, { required_documents: docs });
+      await cache.delete('templates:all');
+      await cache.delete(`templates:${id}`);
+      return reply.send(updated);
+    } catch (error: any) {
+      if (error.message && error.message.includes('File type')) {
+        return reply.status(400).send({ error: error.message });
+      }
+      if (error.message && error.message.includes('File size')) {
+        return reply.status(400).send({ error: 'File size exceeds 50MB limit' });
+      }
+      return reply.status(500).send({ error: error.message || 'Failed to upload template document' });
+    }
+  });
+
+  // Remove file from a template required document (keeps the document row)
+  fastify.delete('/:id/documents/:documentCode/file', async (request: AuthenticatedRequest, reply) => {
+    try {
+      const { id, documentCode } = request.params as { id: string; documentCode: string };
+      const template = await memoryDb.getTemplate(id);
+      if (!template) {
+        return reply.status(404).send({ error: 'Template not found' });
+      }
+
+      const docs = Array.isArray(template.required_documents) ? [...template.required_documents] : [];
+      const docIndex = docs.findIndex((doc: any) => doc.code === documentCode);
+      if (docIndex === -1) {
+        return reply.status(404).send({ error: 'Document not found on this template' });
+      }
+
+      const previous = docs[docIndex] as any;
+      if (previous?.fileUrl && String(previous.fileUrl).startsWith('/uploads/')) {
+        deleteFile(previous.fileUrl).catch((err) => {
+          console.error('Error deleting template document file:', err);
+        });
+      }
+
+      docs[docIndex] = {
+        ...previous,
+        fileUrl: undefined,
+        fileName: undefined,
+        fileSize: undefined,
+        uploadedAt: undefined,
+      };
+      delete (docs[docIndex] as any).fileUrl;
+      delete (docs[docIndex] as any).fileName;
+      delete (docs[docIndex] as any).fileSize;
+      delete (docs[docIndex] as any).uploadedAt;
+
+      const updated = await memoryDb.updateTemplate(id, { required_documents: docs });
+      await cache.delete('templates:all');
+      await cache.delete(`templates:${id}`);
+      return reply.send(updated);
+    } catch (error: any) {
+      return reply.status(500).send({ error: error.message || 'Failed to remove template document file' });
     }
   });
 };
