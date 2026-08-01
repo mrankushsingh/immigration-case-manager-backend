@@ -352,17 +352,15 @@ const caseTemplatesRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ error: 'Document not found on this template' });
       }
 
-      let storedName: string;
       let fileUrl: string;
       if (isUsingBucketStorage()) {
+        // Keep the key flat: /uploads/* serving resolves by base filename only.
         const uniqueSuffix = `${Date.now()}_${Math.round(Math.random() * 1E9)}`;
         const ext = extname(fileData.filename);
-        const name = fileData.filename.replace(ext, '').replace(/[^a-zA-Z0-9]/g, '_');
-        storedName = `templates/${id}/${name}_${uniqueSuffix}${ext}`;
-        fileUrl = await uploadFile(fileData.buffer, storedName, fileData.mimetype);
+        const name = sanitizeFilename(fileData.filename).replace(ext, '').replace(/[^a-zA-Z0-9]/g, '_');
+        fileUrl = await uploadFile(fileData.buffer, `${name}_${uniqueSuffix}${ext}`, fileData.mimetype);
       } else {
         fileUrl = saveFileLocally(fileData.buffer, fileData.filename);
-        storedName = fileUrl.replace('/uploads/', '');
       }
 
       const previous = docs[docIndex] as any;

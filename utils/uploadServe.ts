@@ -25,11 +25,16 @@ export function resolveUploadFilename(rawPath: string): string | null {
     decoded = rawPath;
   }
 
-  const name = basename(decoded.replace(/\\/g, '/'));
-  if (!name || name === '.' || name === '..' || name.includes('..')) {
+  // Some files are stored under sub-folders (e.g. clients/<id>/requested/<file>),
+  // so keep the sub-path but reject anything that could escape the uploads root.
+  const segments = decoded.replace(/\\/g, '/').split('/').filter((segment) => segment.length > 0);
+  if (segments.length === 0) {
     return null;
   }
-  return name;
+  if (segments.some((segment) => segment === '.' || segment === '..' || segment.includes('\0'))) {
+    return null;
+  }
+  return segments.join('/');
 }
 
 export function resolveUploadFilePath(uploadsDir: string, filename: string): string | null {
