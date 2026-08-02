@@ -11,6 +11,7 @@ import teamMembersRoutes from './routes/teamMembers.js';
 import appointmentsRoutes from './routes/appointments.js';
 import aiAppointmentsRoutes from './routes/aiAppointments.js';
 import analyticsRoutes from './routes/analytics.js';
+import paytrackHistoryRoutes from './routes/paytrackHistory.js';
 import { db } from './utils/database.js';
 import { cache } from './utils/cache.js';
 import { isUsingBucketStorage, fileExists } from './utils/storage.js';
@@ -177,6 +178,9 @@ await fastify.register(async (fastify) => {
   // Team tasks (TEAMS TO DO) - general limit
   await fastify.register(teamTasksRoutes, { prefix: '/team-tasks' });
   await fastify.register(teamMembersRoutes, { prefix: '/team-members' });
+
+  // PayTrack audit history (survives client deletes)
+  await fastify.register(paytrackHistoryRoutes, { prefix: '/paytrack-history' });
 
   // Appointments calendar - general limit
   await fastify.register(appointmentsRoutes, { prefix: '/appointments' });
