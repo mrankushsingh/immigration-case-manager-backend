@@ -292,6 +292,32 @@ class DatabaseAdapter {
           END IF;
         END $$;
       `);
+
+      // Archive flag for reminders shown as team tasks
+      await this.pool.query(`
+        DO $$ 
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_name = 'reminders' AND column_name = 'archived'
+          ) THEN
+            ALTER TABLE reminders ADD COLUMN archived BOOLEAN DEFAULT false;
+          END IF;
+        END $$;
+      `);
+
+      // Archive flag for team tasks
+      await this.pool.query(`
+        DO $$ 
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_name = 'team_tasks' AND column_name = 'archived'
+          ) THEN
+            ALTER TABLE team_tasks ADD COLUMN archived BOOLEAN DEFAULT false;
+          END IF;
+        END $$;
+      `);
       
       // Add migration to make client_id nullable if it exists as NOT NULL
       await this.pool.query(`
@@ -1560,16 +1586,18 @@ class DatabaseAdapter {
     reminder_type?: string;
     team_member?: string | null;
     done?: boolean;
+    archived?: boolean;
   }): Promise<any> {
     await this.ensureInitialized();
     const id = `reminder_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const now = new Date().toISOString();
     const done = !!reminder.done;
+    const archived = !!reminder.archived;
 
     if (this.usePostgres && this.pool) {
       await this.pool.query(
-        `INSERT INTO reminders (id, client_id, client_name, client_surname, phone, reminder_date, notes, reminder_type, team_member, done, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        `INSERT INTO reminders (id, client_id, client_name, client_surname, phone, reminder_date, notes, reminder_type, team_member, done, archived, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
           id,
           reminder.client_id || null,
@@ -1581,6 +1609,7 @@ class DatabaseAdapter {
           reminder.reminder_type || null,
           reminder.team_member || null,
           done,
+          archived,
           now,
           now,
         ]
@@ -1600,6 +1629,7 @@ class DatabaseAdapter {
         id,
         ...reminder,
         done,
+        archived,
         created_at: now,
         updated_at: now,
       };
@@ -1611,6 +1641,7 @@ class DatabaseAdapter {
       id,
       ...reminder,
       done,
+      archived,
       created_at: now,
       updated_at: now,
     };
@@ -1642,6 +1673,7 @@ class DatabaseAdapter {
     reminder_type?: string;
     team_member?: string | null;
     done?: boolean;
+    archived?: boolean;
   }): Promise<boolean> {
     await this.ensureInitialized();
     const now = new Date().toISOString();
@@ -1687,6 +1719,10 @@ class DatabaseAdapter {
         updates.push(`done = $${paramIndex++}`);
         values.push(!!reminder.done);
       }
+      if (reminder.archived !== undefined) {
+        updates.push(`archived = $${paramIndex++}`);
+        values.push(!!reminder.archived);
+      }
 
       updates.push(`updated_at = $${paramIndex++}`);
       values.push(now);
@@ -1708,6 +1744,7 @@ class DatabaseAdapter {
           ...reminders[index],
           ...reminder,
           ...(reminder.done !== undefined ? { done: !!reminder.done } : {}),
+          ...(reminder.archived !== undefined ? { archived: !!reminder.archived } : {}),
           updated_at: now,
         };
         writeFileSync(remindersFile, JSON.stringify(reminders, null, 2), 'utf-8');
@@ -1743,7 +1780,7 @@ class DatabaseAdapter {
     await this.ensureInitialized();
     if (this.usePostgres && this.pool) {
       const result = await this.pool.query(
-        'SELECT id, team_member, title, notes, done, created_at, updated_at FROM team_tasks ORDER BY created_at DESC'
+        'SELECT id, team_member, title, notes, done, archived, created_at, updated_at FROM team_tasks ORDER BY created_at DESC'
       );
       return result.rows;
     }
@@ -1769,8 +1806,8 @@ class DatabaseAdapter {
 
     if (this.usePostgres && this.pool) {
       await this.pool.query(
-        `INSERT INTO team_tasks (id, team_member, title, notes, done, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, false, $5, $5)`,
+        `INSERT INTO team_tasks (id, team_member, title, notes, done, archived, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, false, false, $5, $5)`,
         [id, task.team_member, task.title.trim(), notes, now]
       );
     } else {
@@ -1790,6 +1827,7 @@ class DatabaseAdapter {
         title: task.title.trim(),
         notes,
         done: false,
+        archived: false,
         created_at: now,
         updated_at: now,
       };
@@ -1803,6 +1841,7 @@ class DatabaseAdapter {
       title: task.title.trim(),
       notes,
       done: false,
+      archived: false,
       created_at: now,
       updated_at: now,
     };
@@ -1810,7 +1849,7 @@ class DatabaseAdapter {
 
   async updateTeamTask(
     id: string,
-    patch: { title?: string; notes?: string | null; done?: boolean }
+    patch: { title?: string; notes?: string | null; done?: boolean; archived?: boolean }
   ): Promise<any | null> {
     await this.ensureInitialized();
     const now = new Date().toISOString();
@@ -1832,6 +1871,10 @@ class DatabaseAdapter {
         updates.push(`done = $${paramIndex++}`);
         values.push(!!patch.done);
       }
+      if (patch.archived !== undefined) {
+        updates.push(`archived = $${paramIndex++}`);
+        values.push(!!patch.archived);
+      }
 
       if (updates.length === 0) return null;
 
@@ -1839,7 +1882,7 @@ class DatabaseAdapter {
       values.push(now);
       values.push(id);
 
-      const query = `UPDATE team_tasks SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, team_member, title, notes, done, created_at, updated_at`;
+      const query = `UPDATE team_tasks SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, team_member, title, notes, done, archived, created_at, updated_at`;
       const result = await this.pool.query(query, values);
       if (result.rows.length === 0) return null;
       return result.rows[0];
@@ -1855,6 +1898,7 @@ class DatabaseAdapter {
       if (patch.title !== undefined) row.title = patch.title.trim();
       if (patch.notes !== undefined) row.notes = patch.notes === null || patch.notes === '' ? null : String(patch.notes);
       if (patch.done !== undefined) row.done = !!patch.done;
+      if (patch.archived !== undefined) row.archived = !!patch.archived;
       row.updated_at = now;
       list[index] = row;
       writeFileSync(teamTasksFile, JSON.stringify(list, null, 2), 'utf-8');

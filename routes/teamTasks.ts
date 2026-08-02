@@ -28,6 +28,7 @@ function rowToApi(row: any) {
     title: row.title,
     notes: row.notes ?? '',
     done: !!row.done,
+    archived: !!row.archived,
     createdAt: formatTimestamp(row.created_at),
     updatedAt: formatTimestamp(row.updated_at),
   };
@@ -75,9 +76,9 @@ const teamTasksRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.patch('/:id', async (request: AuthenticatedRequest, reply) => {
     try {
       const { id } = request.params as { id: string };
-      const body = request.body as { title?: string; notes?: string; done?: boolean };
+      const body = request.body as { title?: string; notes?: string; done?: boolean; archived?: boolean };
 
-      const patch: { title?: string; notes?: string | null; done?: boolean } = {};
+      const patch: { title?: string; notes?: string | null; done?: boolean; archived?: boolean } = {};
       if (body.title !== undefined) {
         const t = String(body.title).trim();
         if (!t) {
@@ -90,6 +91,9 @@ const teamTasksRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (body.done !== undefined) {
         patch.done = !!body.done;
+      }
+      if (body.archived !== undefined) {
+        patch.archived = !!body.archived;
       }
 
       if (Object.keys(patch).length === 0) {
