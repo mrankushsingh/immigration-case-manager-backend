@@ -318,6 +318,19 @@ class DatabaseAdapter {
           END IF;
         END $$;
       `);
+
+      // Optional deadline for team tasks
+      await this.pool.query(`
+        DO $$ 
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_name = 'team_tasks' AND column_name = 'deadline'
+          ) THEN
+            ALTER TABLE team_tasks ADD COLUMN deadline TIMESTAMP;
+          END IF;
+        END $$;
+      `);
       
       // Add migration to make client_id nullable if it exists as NOT NULL
       await this.pool.query(`
@@ -1780,7 +1793,7 @@ class DatabaseAdapter {
     await this.ensureInitialized();
     if (this.usePostgres && this.pool) {
       const result = await this.pool.query(
-        'SELECT id, team_member, title, notes, done, archived, created_at, updated_at FROM team_tasks ORDER BY created_at DESC'
+        'SELECT id, team_member, title, notes, done, archived, deadline, created_at, updated_at FROM team_tasks ORDER BY created_at DESC'
       );
       return result.rows;
     }
@@ -1798,17 +1811,19 @@ class DatabaseAdapter {
     team_member: string;
     title: string;
     notes?: string;
+    deadline?: string | null;
   }): Promise<any> {
     await this.ensureInitialized();
     const id = `teamtask_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const now = new Date().toISOString();
     const notes = task.notes?.trim() || null;
+    const deadline = task.deadline ? new Date(task.deadline).toISOString() : null;
 
     if (this.usePostgres && this.pool) {
       await this.pool.query(
-        `INSERT INTO team_tasks (id, team_member, title, notes, done, archived, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, false, false, $5, $5)`,
-        [id, task.team_member, task.title.trim(), notes, now]
+        `INSERT INTO team_tasks (id, team_member, title, notes, done, archived, deadline, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, false, false, $5, $6, $6)`,
+        [id, task.team_member, task.title.trim(), notes, deadline, now]
       );
     } else {
       const teamTasksFile = join(this.dataDir, 'team_tasks.json');
@@ -1828,6 +1843,7 @@ class DatabaseAdapter {
         notes,
         done: false,
         archived: false,
+        deadline,
         created_at: now,
         updated_at: now,
       };
@@ -1842,6 +1858,7 @@ class DatabaseAdapter {
       notes,
       done: false,
       archived: false,
+      deadline,
       created_at: now,
       updated_at: now,
     };
@@ -1849,7 +1866,13 @@ class DatabaseAdapter {
 
   async updateTeamTask(
     id: string,
-    patch: { title?: string; notes?: string | null; done?: boolean; archived?: boolean }
+    patch: {
+      title?: string;
+      notes?: string | null;
+      done?: boolean;
+      archived?: boolean;
+      deadline?: string | null;
+    }
   ): Promise<any | null> {
     await this.ensureInitialized();
     const now = new Date().toISOString();
@@ -1875,6 +1898,10 @@ class DatabaseAdapter {
         updates.push(`archived = $${paramIndex++}`);
         values.push(!!patch.archived);
       }
+      if (patch.deadline !== undefined) {
+        updates.push(`deadline = $${paramIndex++}`);
+        values.push(patch.deadline ? new Date(patch.deadline).toISOString() : null);
+      }
 
       if (updates.length === 0) return null;
 
@@ -1882,7 +1909,7 @@ class DatabaseAdapter {
       values.push(now);
       values.push(id);
 
-      const query = `UPDATE team_tasks SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, team_member, title, notes, done, archived, created_at, updated_at`;
+      const query = `UPDATE team_tasks SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, team_member, title, notes, done, archived, deadline, created_at, updated_at`;
       const result = await this.pool.query(query, values);
       if (result.rows.length === 0) return null;
       return result.rows[0];
@@ -1899,6 +1926,9 @@ class DatabaseAdapter {
       if (patch.notes !== undefined) row.notes = patch.notes === null || patch.notes === '' ? null : String(patch.notes);
       if (patch.done !== undefined) row.done = !!patch.done;
       if (patch.archived !== undefined) row.archived = !!patch.archived;
+      if (patch.deadline !== undefined) {
+        row.deadline = patch.deadline ? new Date(patch.deadline).toISOString() : null;
+      }
       row.updated_at = now;
       list[index] = row;
       writeFileSync(teamTasksFile, JSON.stringify(list, null, 2), 'utf-8');

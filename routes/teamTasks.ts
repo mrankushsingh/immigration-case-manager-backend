@@ -21,6 +21,16 @@ function formatTimestamp(v: unknown): string {
   }
 }
 
+function normalizeDeadline(raw: unknown): string | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === '') return null;
+  const d = new Date(String(raw));
+  if (Number.isNaN(d.getTime())) {
+    throw new Error('Invalid deadline');
+  }
+  return d.toISOString();
+}
+
 function rowToApi(row: any) {
   return {
     id: row.id,
@@ -29,6 +39,7 @@ function rowToApi(row: any) {
     notes: row.notes ?? '',
     done: !!row.done,
     archived: !!row.archived,
+    deadline: row.deadline ? formatTimestamp(row.deadline) : null,
     createdAt: formatTimestamp(row.created_at),
     updatedAt: formatTimestamp(row.updated_at),
   };
@@ -46,7 +57,13 @@ const teamTasksRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post('/', async (request: AuthenticatedRequest, reply) => {
     try {
-      const body = request.body as { teamMember?: string; team_member?: string; title?: string; notes?: string };
+      const body = request.body as {
+        teamMember?: string;
+        team_member?: string;
+        title?: string;
+        notes?: string;
+        deadline?: string | null;
+      };
       const memberRaw = body.teamMember ?? body.team_member;
       const member = await normalizeMember(memberRaw || '');
       const title = typeof body.title === 'string' ? body.title.trim() : '';
@@ -61,10 +78,18 @@ const teamTasksRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ error: 'title is required' });
       }
 
+      let deadline: string | null | undefined;
+      try {
+        deadline = normalizeDeadline(body.deadline);
+      } catch {
+        return reply.status(400).send({ error: 'Invalid deadline' });
+      }
+
       const row = await db.insertTeamTask({
         team_member: member,
         title,
         notes: typeof body.notes === 'string' ? body.notes : undefined,
+        deadline: deadline ?? null,
       });
 
       return reply.status(201).send(rowToApi(row));
@@ -76,9 +101,21 @@ const teamTasksRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.patch('/:id', async (request: AuthenticatedRequest, reply) => {
     try {
       const { id } = request.params as { id: string };
-      const body = request.body as { title?: string; notes?: string; done?: boolean; archived?: boolean };
+      const body = request.body as {
+        title?: string;
+        notes?: string;
+        done?: boolean;
+        archived?: boolean;
+        deadline?: string | null;
+      };
 
-      const patch: { title?: string; notes?: string | null; done?: boolean; archived?: boolean } = {};
+      const patch: {
+        title?: string;
+        notes?: string | null;
+        done?: boolean;
+        archived?: boolean;
+        deadline?: string | null;
+      } = {};
       if (body.title !== undefined) {
         const t = String(body.title).trim();
         if (!t) {
@@ -94,6 +131,13 @@ const teamTasksRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (body.archived !== undefined) {
         patch.archived = !!body.archived;
+      }
+      if (body.deadline !== undefined) {
+        try {
+          patch.deadline = normalizeDeadline(body.deadline) ?? null;
+        } catch {
+          return reply.status(400).send({ error: 'Invalid deadline' });
+        }
       }
 
       if (Object.keys(patch).length === 0) {
