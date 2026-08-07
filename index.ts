@@ -12,6 +12,7 @@ import appointmentsRoutes from './routes/appointments.js';
 import aiAppointmentsRoutes from './routes/aiAppointments.js';
 import analyticsRoutes from './routes/analytics.js';
 import paytrackHistoryRoutes from './routes/paytrackHistory.js';
+import paytrackReportsRoutes from './routes/paytrackReports.js';
 import { db } from './utils/database.js';
 import { cache } from './utils/cache.js';
 import { isUsingBucketStorage, fileExists } from './utils/storage.js';
@@ -19,6 +20,7 @@ import { handleAuthenticatedUpload } from './utils/uploadServe.js';
 import { initializeFirebaseAdmin } from './utils/firebase.js';
 import { authenticateToken, AuthenticatedRequest } from './middleware/auth.js';
 import { rateLimitConfig, registerRateLimit } from './middleware/rateLimit.js';
+import { startPaytrackDailyTelegramScheduler } from './utils/paytrackTelegramJobs.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -182,6 +184,9 @@ await fastify.register(async (fastify) => {
   // PayTrack audit history (survives client deletes)
   await fastify.register(paytrackHistoryRoutes, { prefix: '/paytrack-history' });
 
+  // PayTrack reports → Telegram PDF
+  await fastify.register(paytrackReportsRoutes, { prefix: '/paytrack-reports' });
+
   // Appointments calendar - general limit
   await fastify.register(appointmentsRoutes, { prefix: '/appointments' });
   
@@ -263,6 +268,11 @@ const start = async () => {
     }
     
     console.log(`\n🔍 Check /health endpoint for database status`);
+
+    startPaytrackDailyTelegramScheduler({
+      info: (msg) => fastify.log.info(msg),
+      error: (msg, err) => fastify.log.error({ err }, msg),
+    });
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);

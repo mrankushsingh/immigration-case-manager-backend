@@ -118,8 +118,20 @@ Backend API server for the Immigration Case Manager application.
 | `DATABASE_URL` | PostgreSQL connection string | No | File-based storage |
 | `FIREBASE_SERVICE_ACCOUNT` | Firebase service account JSON | No | Auth disabled |
 | `RAILWAY_BUCKET_*` | Railway bucket credentials | No | Local filesystem |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather | No | Telegram reports disabled |
+| `TELEGRAM_CHAT_ID` | Chat/group ID to receive reports | No | Telegram reports disabled |
+| `PAYTRACK_DAILY_TELEGRAM_HOUR` | Local hour (0–23) for daily 24h PDF | No | `9` |
+| `PAYTRACK_DAILY_TELEGRAM_TZ` | Timezone for daily send | No | `Europe/Madrid` |
+| `PAYTRACK_DAILY_TELEGRAM_ENABLED` | Set `false` to disable daily auto-send | No | enabled when Telegram is configured |
 
-## Database
+### PayTrack → Telegram
+
+With `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` set:
+
+1. **Manual:** `POST /api/paytrack-reports/send-telegram` with `{ "period": "daily" | "monthly" | "all" }` (auth required) sends a text summary + PDF.
+2. **Daily:** every day at `PAYTRACK_DAILY_TELEGRAM_HOUR` in `PAYTRACK_DAILY_TELEGRAM_TZ`, the server sends the last-24-hours PayTrack report (notification + PDF).
+
+Get your chat ID by messaging the bot, then calling `https://api.telegram.org/bot<TOKEN>/getUpdates`.
 
 The backend supports two storage modes:
 
