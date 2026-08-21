@@ -123,6 +123,9 @@ Backend API server for the Immigration Case Manager application.
 | `PAYTRACK_DAILY_TELEGRAM_HOUR` | Local hour (0–23) for daily 24h PDF | No | `9` |
 | `PAYTRACK_DAILY_TELEGRAM_TZ` | Timezone for daily send | No | `Europe/Madrid` |
 | `PAYTRACK_DAILY_TELEGRAM_ENABLED` | Set `false` to disable daily auto-send | No | enabled when Telegram is configured |
+| `INACTIVE_CLIENT_TELEGRAM_ENABLED` | Set `false` to disable 2-week inactive client alerts | No | enabled when Telegram is configured |
+| `INACTIVE_CLIENT_TELEGRAM_HOUR` | Hour for inactive-client check (falls back to PayTrack hour) | No | `9` |
+| `INACTIVE_CLIENT_TELEGRAM_TZ` | Timezone for inactive-client check | No | `Europe/Madrid` |
 
 ### PayTrack → Telegram
 
@@ -130,6 +133,10 @@ With `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` set:
 
 1. **Manual:** `POST /api/paytrack-reports/send-telegram` with `{ "period": "daily" | "monthly" | "all" }` (auth required) sends a text summary + PDF.
 2. **Daily:** every day at `PAYTRACK_DAILY_TELEGRAM_HOUR` in `PAYTRACK_DAILY_TELEGRAM_TZ`, the server sends the last-24-hours PayTrack report (notification + PDF).
+
+### Inactive new clients → Telegram
+
+Every day (same hour by default), the server finds clients created **14+ days ago** with **no case template** and **no uploaded documents**, and sends a Telegram reminder. Each client is notified once when they first qualify, then again every 14 days while still inactive.
 
 Get your chat ID by messaging the bot, then calling `https://api.telegram.org/bot<TOKEN>/getUpdates`.
 

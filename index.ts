@@ -21,6 +21,7 @@ import { initializeFirebaseAdmin } from './utils/firebase.js';
 import { authenticateToken, AuthenticatedRequest } from './middleware/auth.js';
 import { rateLimitConfig, registerRateLimit } from './middleware/rateLimit.js';
 import { startPaytrackDailyTelegramScheduler } from './utils/paytrackTelegramJobs.js';
+import { startInactiveClientTelegramScheduler } from './utils/inactiveClientTelegramJobs.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -270,6 +271,11 @@ const start = async () => {
     console.log(`\n🔍 Check /health endpoint for database status`);
 
     startPaytrackDailyTelegramScheduler({
+      info: (msg) => fastify.log.info(msg),
+      error: (msg, err) => fastify.log.error({ err }, msg),
+    });
+
+    startInactiveClientTelegramScheduler({
       info: (msg) => fastify.log.info(msg),
       error: (msg, err) => fastify.log.error({ err }, msg),
     });
