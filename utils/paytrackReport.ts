@@ -330,6 +330,8 @@ export async function paytrackReportToPdfBuffer(report: PaytrackReport): Promise
     doc.fontSize(11).fillColor('#888888').text(
       period === 'daily'
         ? 'No client activity in the last 24 hours.'
+        : period === 'weekly'
+          ? 'No client activity in the last 7 days.'
         : period === 'monthly'
           ? 'No client activity this month.'
           : 'No PayTrack clients.'
@@ -357,6 +359,8 @@ export async function paytrackReportToPdfBuffer(report: PaytrackReport): Promise
     doc.fontSize(11).text(
       period === 'daily'
         ? 'Activity (last 24 hours)'
+        : period === 'weekly'
+          ? 'Activity (last 7 days)'
         : period === 'monthly'
           ? 'Activity (this month)'
           : 'Full activity history'
@@ -389,6 +393,8 @@ export async function paytrackReportToPdfBuffer(report: PaytrackReport): Promise
     doc.fontSize(11).fillColor('#000000').text(
       period === 'daily'
         ? 'Audit (last 24 hours)'
+        : period === 'weekly'
+          ? 'Audit (last 7 days)'
         : period === 'monthly'
           ? 'Audit (this month)'
           : 'Full audit history'
