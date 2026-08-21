@@ -7,7 +7,7 @@ import {
 } from '../utils/paytrackTelegramJobs.js';
 import type { PaytrackReportPeriod } from '../utils/paytrackReport.js';
 
-const PERIODS: PaytrackReportPeriod[] = ['daily', 'monthly', 'all'];
+const PERIODS: PaytrackReportPeriod[] = ['daily', 'weekly', 'monthly', 'all'];
 
 function parsePeriod(value: unknown): PaytrackReportPeriod | null {
   if (typeof value !== 'string') return null;

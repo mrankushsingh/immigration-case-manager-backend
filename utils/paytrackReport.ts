@@ -1,7 +1,7 @@
 import PDFDocument from 'pdfkit';
 import { isFeePaymentEntry, sumPaidPaymentAmount } from './paymentTotals.js';
 
-export type PaytrackReportPeriod = 'daily' | 'monthly' | 'all';
+export type PaytrackReportPeriod = 'daily' | 'weekly' | 'monthly' | 'all';
 
 type PaymentLike = {
   amount?: number;
@@ -115,6 +115,17 @@ export function getPaytrackReportRange(
       start,
       end,
       label: `Daily · last 24 hours (${formatRangeDate(start)} ${formatRangeTime(start)} – ${formatRangeDate(end)} ${formatRangeTime(end)})`,
+    };
+  }
+
+  if (period === 'weekly') {
+    const end = new Date(now);
+    const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    return {
+      period,
+      start,
+      end,
+      label: `Weekly · last 7 days (${formatRangeDate(start)} – ${formatRangeDate(end)})`,
     };
   }
 
@@ -259,6 +270,8 @@ export function paytrackReportSummaryText(report: PaytrackReport): string {
   if (report.clients.length === 0) {
     lines.push('', period === 'daily'
       ? 'No client activity in the last 24 hours.'
+      : period === 'weekly'
+        ? 'No client activity in the last 7 days.'
       : period === 'monthly'
         ? 'No client activity this month.'
         : 'No PayTrack clients.');
